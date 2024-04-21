@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kardashev-client",
+    "crates/kardashev-lab",
+    "crates/kardashev-frontend",
+    "crates/kardashev-protocol",
+    "crates/kardashev-seed",
+    "crates/kardashev-server"
+]

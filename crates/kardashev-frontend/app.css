@@ -1,0 +1,15 @@
+
+.navbar {
+    background-color: #2c005f;
+    background-image: var(--bs-gradient);
+}
+
+.sidebar {
+    width: 280px;
+    background-color: #2c005f;
+    background-image: var(--bs-gradient);
+}
+
+.sidebar .nav-link.active {
+    background: rgba(0, 0, 0, 0.5);
+}
