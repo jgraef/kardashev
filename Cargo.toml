@@ -3,10 +3,10 @@ resolver = "2"
 members = [
     "kardashev-client",
     "kardashev-lab",
-    "kardashev-frontend",
     "kardashev-protocol",
     "kardashev-seed",
-    "kardashev-server"
+    "kardashev-server",
+    "kardashev-ui",
 ]
 
 [workspace.dependencies.kardashev-client]
