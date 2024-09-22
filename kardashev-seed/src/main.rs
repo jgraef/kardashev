@@ -9,6 +9,7 @@ use std::path::{
     PathBuf,
 };
 
+use clap::Parser;
 use color_eyre::eyre::Error;
 use gaia::Data;
 use indicatif::{
@@ -21,33 +22,32 @@ use nalgebra::{
     Vector3,
 };
 use sqlx::SqlitePool;
-use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Args {
-    #[structopt(long, env = "DATABASE_URL")]
+    #[arg(long, env = "DATABASE_URL")]
     database_url: String,
 
-    #[structopt(subcommand)]
+    #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 enum Command {
     Render {
-        #[structopt(short, long)]
+        #[arg(short, long)]
         output: PathBuf,
         path: PathBuf,
-        #[structopt(short, long, default_value = "top-down")]
+        #[arg(short, long, default_value = "top-down")]
         view: render::View,
-        #[structopt(short, long, default_value = "1024")]
+        #[arg(short, long, default_value = "1024")]
         width: u32,
     },
     Export {
-        #[structopt(short, long)]
+        #[arg(short, long)]
         output: PathBuf,
         path: PathBuf,
-        #[structopt(short, long, default_value = "1024")]
+        #[arg(short, long, default_value = "1024")]
         limit_per_file: u64,
     },
     Import {
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Error> {
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
 
-    let args = Args::from_args();
+    let args = Args::parse();
     args.run().await?;
 
     Ok(())

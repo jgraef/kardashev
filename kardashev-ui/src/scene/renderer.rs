@@ -20,13 +20,13 @@ use winit::{
     dpi::PhysicalSize,
     event::Event,
     event_loop::{
-        EventLoopBuilder,
+        ActiveEventLoop,
+        EventLoop,
         EventLoopProxy,
-        EventLoopWindowTarget,
     },
     window::{
         Window,
-        WindowBuilder,
+        WindowAttributes,
         WindowId,
     },
 };
@@ -83,7 +83,7 @@ pub struct SceneRenderer {
 
 impl SceneRenderer {
     pub fn new(config: SceneRendererConfig) -> Self {
-        let event_loop = EventLoopBuilder::with_user_event()
+        let event_loop = EventLoop::with_user_event()
             .build()
             .expect("failed to create event loop");
         let proxy = event_loop.create_proxy();
@@ -187,6 +187,7 @@ impl RenderLoop {
                     label: None,
                     required_features: Default::default(),
                     required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                    memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
             )
@@ -206,7 +207,7 @@ impl RenderLoop {
         })
     }
 
-    fn handle_event(&mut self, event: Event<Command>, target: &EventLoopWindowTarget<Command>) {
+    fn handle_event(&mut self, event: Event<Command>, active_event_loop: &ActiveEventLoop) {
         match event {
             Event::WindowEvent { window_id, event } => {
                 tracing::debug!(?window_id, ?event, "window event");
@@ -253,7 +254,13 @@ impl RenderLoop {
                         tx_window,
                         tx_events,
                     } => {
-                        self.create_window(&target, canvas, scene_view, tx_window, tx_events);
+                        self.create_window(
+                            &active_event_loop,
+                            canvas,
+                            scene_view,
+                            tx_window,
+                            tx_events,
+                        );
                     }
                     Command::DestroyWindow { window_id } => {
                         self.destroy_window(window_id);
@@ -277,7 +284,7 @@ impl RenderLoop {
 
     fn create_window(
         &mut self,
-        target: &EventLoopWindowTarget<Command>,
+        active_event_loop: &ActiveEventLoop,
         canvas: HtmlCanvasElement,
         scene_view: Option<SceneView>,
         tx_window: oneshot::Sender<Arc<Window>>,
@@ -288,20 +295,19 @@ impl RenderLoop {
         let size = PhysicalSize::new(canvas.width(), canvas.height());
 
         #[allow(unused_mut)]
-        let mut window_builder = WindowBuilder::new().with_inner_size(size);
-
+        let mut window_attributes = WindowAttributes::default();
         #[cfg(target_arch = "wasm32")]
         {
-            use winit::platform::web::WindowBuilderExtWebSys;
-            window_builder = window_builder.with_canvas(Some(canvas));
+            use winit::platform::web::WindowAttributesExtWebSys;
+            window_attributes = window_attributes.with_canvas(Some(canvas));
         }
 
-        let window = window_builder
-            .build(&target)
-            .expect("failed to build window");
+        let window = active_event_loop
+            .create_window(window_attributes)
+            .expect("failed to create window");
         let window = Arc::new(window);
         let window_id = window.id();
-        tx_window.send(window.clone());
+        let _ = tx_window.send(window.clone());
 
         let surface = self
             .instance
@@ -383,6 +389,7 @@ impl RenderLoop {
                     alpha_to_coverage_enabled: false,
                 },
                 multiview: None,
+                cache: None,
             });
 
         const VERTICES: &[Vertex] = &[
@@ -558,8 +565,10 @@ fn render_scene(
         render_pass.draw_indexed(0..render_buffer.num_indices as u32, 0, 0..1);
     }
 
-    for (entity, (transform, mesh)) in world.query_mut::<(&Transform, &Mesh)>() {
-        let transform = &camera_transform * &transform.transform;
+    for (_entity, (transform, _mesh)) in world.query_mut::<(&Transform, &Mesh)>() {
+        let _transform = &camera_transform * &transform.transform;
+
+        // todo
     }
 
     queue.submit(Some(encoder.finish()));

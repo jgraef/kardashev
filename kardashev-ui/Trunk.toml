@@ -2,9 +2,7 @@
 target = "index.html"
 dist = "dist/"
 
-[serve]
-port = 8080
-
-[[proxy]]
-rewrite = "/assets"
-backend = "http://localhost:8082/"
+[[hooks]]
+stage = "pre_build"
+command = "stylance"
+command_arguments = ["."]

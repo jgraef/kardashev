@@ -10,7 +10,7 @@ color-eyre = "0.6"
 dotenvy = "0.15"
 mime = "0.3.17"
 notify-async = { git = "https://github.com/FeraeLabs/notify-async.git" }
-sqlx = { version = "0.7.4", features = ["postgres", "runtime-tokio"] }
+sqlx = { version = "0.8.2", features = ["postgres", "runtime-tokio"] }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 tokio-util = "0.7.12"

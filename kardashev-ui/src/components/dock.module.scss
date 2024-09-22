@@ -1,0 +1,56 @@
+
+.dock {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 3rem;
+    background: $kardashev-primary;
+    background-image: $gradient;
+
+    .item {
+        border-radius: 0;
+        list-style: none;
+    }
+
+    .link {
+        display: block;
+        font-size: 1.5em;
+        width: 3rem;
+        height: 3rem;
+        margin-top: auto;
+        margin-bottom: auto;
+        color: white;
+        transition: background-color ease-in-out 0.3s;
+        
+        &:hover {
+            color: $kardashev-emphasis-light;
+        }
+
+        i {
+            vertical-align: middle;
+            padding-top: 0.2em;
+        }
+
+        &:global(.active) {
+            background: black;
+        }
+    }
+
+    %group {
+        display: flex;
+        flex-direction: column;
+        text-align: center;
+        padding: 0;
+        margin: 0;
+    }
+    
+    .group-top {
+        @extend %group;
+        margin-bottom: auto;
+    }
+    
+    .group-bottom {
+        @extend %group;
+        margin-top: auto;
+    }
+}

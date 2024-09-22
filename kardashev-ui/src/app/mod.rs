@@ -20,16 +20,16 @@ use leptos_router::{
 use url::Url;
 
 use self::main::MainPage;
-use crate::scene::renderer::SceneRenderer;
+use crate::components::dock::Dock;
 
-#[component]
-pub fn BootstrapIcon(#[prop(into)] icon: Oco<'static, str>) -> impl IntoView {
-    view! { <i class={format!("bi bi-{icon}")}></i> }
-}
+stylance::import_crate_style!(style, "src/app/app.module.scss");
 
 fn get_api_url() -> Url {
-    //let url: Url = gloo_utils::document().base_uri().ok()??.parse().ok()?;
-    let url: Url = "http://localhost:3333/".parse().unwrap();
+    fn get_url() -> Option<Url> {
+        gloo_utils::document().base_uri().ok()??.parse().ok()
+    }
+    let url: Url = get_url().expect("could not determine API URL");
+    //let url: Url = "http://localhost:3333/".parse().unwrap();
     tracing::debug!(url = %url);
     url
 }
@@ -37,18 +37,18 @@ fn get_api_url() -> Url {
 #[derive(Clone)]
 pub struct Context {
     pub client: Client,
-    pub scene_renderer: SceneRenderer,
+    //pub scene_renderer: SceneRenderer,
 }
 
 fn provide_context() -> Context {
     let client = Client::new(get_api_url());
 
-    tracing::debug!("creating scene renderer");
-    let scene_renderer = SceneRenderer::new(Default::default());
+    //tracing::debug!("creating scene renderer");
+    //let scene_renderer = SceneRenderer::new(Default::default());
 
     let context = Context {
         client,
-        scene_renderer,
+        //scene_renderer,
     };
 
     leptos::provide_context(context.clone());
@@ -66,14 +66,12 @@ pub fn App() -> impl IntoView {
     provide_context();
 
     view! {
-        <Html
-            attr:data-bs-theme="dark"
-        />
         <Router>
-            <div class="d-flex flex-column" style="width: 100vw; height: 100vh;">
-                <main class="main d-flex flex-column w-100 h-100 mw-100 mh-100">
+            <div class=style::app>
+                <Dock />
+                <main class=style::main>
                     <Routes>
-                        <Route path="/" view=MainPage />
+                        <Route path="/" view=|| view!{ "Hello World" } />
                     </Routes>
                 </main>
             </div>
