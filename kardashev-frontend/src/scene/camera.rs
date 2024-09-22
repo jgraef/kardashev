@@ -1,6 +1,4 @@
-use nalgebra::{
-    Projective3,
-};
+use nalgebra::Projective3;
 use palette::Srgba;
 
 pub struct Camera {

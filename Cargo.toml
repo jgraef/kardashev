@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/kardashev-client",
-    "crates/kardashev-lab",
-    "crates/kardashev-frontend",
-    "crates/kardashev-protocol",
-    "crates/kardashev-seed",
-    "crates/kardashev-server"
+    "kardashev-client",
+    "kardashev-lab",
+    "kardashev-frontend",
+    "kardashev-protocol",
+    "kardashev-seed",
+    "kardashev-server"
 ]
 
 [workspace.dependencies.kardashev-client]
-path = "crates/kardashev-client"
+path = "kardashev-client"
 version = "0.1.0"
 
 [workspace.dependencies.kardashev-protocol]
-path = "crates/kardashev-protocol"
+path = "kardashev-protocol"
 version = "0.1.0"

@@ -15,4 +15,6 @@ Thumbs.db
 .env
 
 # trunk dist
-/crates/kardashev-frontend/dist
+/kardashev-frontend/dist
+/assets/dist
+

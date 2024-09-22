@@ -1,19 +1,20 @@
 mod api;
 mod error;
 mod server;
+mod util;
 
 use std::net::SocketAddr;
 
+use clap::Parser;
 use server::Server;
 use sqlx::PgPool;
-use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 struct Args {
-    #[structopt(long, env = "DATABASE_URL")]
+    #[arg(long, env = "DATABASE_URL")]
     database_url: String,
 
-    #[structopt(short, long, default_value = "127.0.0.1:3000")]
+    #[arg(short, long, default_value = "127.0.0.1:3000")]
     bind: SocketAddr,
 }
 
@@ -23,7 +24,7 @@ async fn main() -> Result<(), color_eyre::eyre::Error> {
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
 
-    let args = Args::from_args();
+    let args = Args::parse();
 
     let db = PgPool::connect(&args.database_url).await?;
     let server = Server::new(db).await?;
