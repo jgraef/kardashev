@@ -4,7 +4,8 @@ use url::Url;
 pub struct Client {}
 
 impl Client {
-    pub fn new(url: Url) -> Self {
-        todo!();
+    pub fn new(_url: Url) -> Self {
+        // todo
+        Self {}
     }
 }

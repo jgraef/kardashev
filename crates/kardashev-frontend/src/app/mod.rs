@@ -1,7 +1,5 @@
 mod main;
 
-use std::sync::Arc;
-
 use kardashev_client::Client;
 use leptos::{
     component,
@@ -44,7 +42,9 @@ pub struct Context {
 
 fn provide_context() -> Context {
     let client = Client::new(get_api_url());
-    let scene_renderer = SceneRenderer::new();
+
+    tracing::debug!("creating scene renderer");
+    let scene_renderer = SceneRenderer::new(Default::default());
 
     let context = Context {
         client,

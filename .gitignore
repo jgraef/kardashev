@@ -1,4 +1,18 @@
+# OS
+Thumbs.db
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Rust
 /Cargo.lock
 /target
-/.vscode
-/.env
+/.cargo
+
+# Env vars
+.env
+
+# trunk dist
+/crates/kardashev-frontend/dist

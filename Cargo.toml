@@ -8,3 +8,11 @@ members = [
     "crates/kardashev-seed",
     "crates/kardashev-server"
 ]
+
+[workspace.dependencies.kardashev-client]
+path = "crates/kardashev-client"
+version = "0.1.0"
+
+[workspace.dependencies.kardashev-protocol]
+path = "crates/kardashev-protocol"
+version = "0.1.0"
