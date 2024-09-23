@@ -18,10 +18,11 @@ use nalgebra::{
     Vector3,
 };
 use sqlx::sqlite::SqliteConnectOptions;
+use uuid::Uuid;
 
 use crate::{
     config::Config,
-    gaia,
+    gaia::{self, HealPixRange},
     Error,
 };
 
@@ -39,7 +40,8 @@ pub async fn pack(
     sqlx::migrate!("./migrations").run(&db).await?;
 
     let data = gaia::Data::open(gaia_path).await?;
-    let mut records = data.sequential();
+    let mut records = data.parallel(None, None);
+    //let mut records = data.sequential();
 
     let (_, num_partitions) = records.progress();
     let progress_bar = ProgressBar::new(num_partitions as _);
@@ -52,7 +54,7 @@ pub async fn pack(
     );
 
     async fn next_record(
-        records: &mut gaia::SequentialReader<'_>,
+        records: &mut gaia::ParallelReader,
         abort_signal: impl Future<Output = ()> + Unpin,
     ) -> Result<Option<gaia::Record>, Error> {
         tokio::select! {
@@ -68,7 +70,8 @@ pub async fn pack(
 
     while let Some(record) = next_record(&mut records, &mut ctrl_c).await? {
         struct Record {
-            id: u64,
+            healpix_range: HealPixRange,
+            source_id: u64,
             position: Point3<f64>,
             t_eff: f32,
             absolute_magnitude: f32,
@@ -78,10 +81,13 @@ pub async fn pack(
             age: f32,
         }
 
-        fn convert_record(record: &gaia::Record) -> Option<Record> {
+        fn convert_record(record: &gaia::Record, config: &Config) -> Option<Record> {
             let astro = record.astrophysical_parameters.as_ref()?;
 
             let distance = astro.distance_msc?;
+            if config.local_bubble.map_or(false, |d| d < distance) {
+                return None;
+            }
 
             let position = {
                 let longitude = record.gaia_source.l?;
@@ -98,7 +104,8 @@ pub async fn pack(
             let age = astro.age_flame?;
 
             Some(Record {
-                id: record.gaia_source.source_id,
+                healpix_range: record.healpix_range,
+                source_id: record.gaia_source.source_id,
                 position,
                 t_eff: record.gaia_source.teff_gspphot?,
                 absolute_magnitude,
@@ -109,8 +116,9 @@ pub async fn pack(
             })
         }
 
-        if let Some(record) = convert_record(&record) {
-            let id = record.id as i64;
+        if let Some(record) = convert_record(&record, &config) {
+            let id = Uuid::new_v4().to_string();
+            let source_id = record.source_id as i64;
             sqlx::query!(
                 r#"
                 INSERT INTO star (
@@ -123,9 +131,12 @@ pub async fn pack(
                     luminosity,
                     radius,
                     mass,
-                    age
+                    age,
+                    healpix_start,
+                    healpix_end,
+                    source_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
                 id,
                 record.position.x,
@@ -137,12 +148,14 @@ pub async fn pack(
                 record.radius,
                 record.mass,
                 record.age,
+                record.healpix_range.start,
+                record.healpix_range.end,
+                source_id,
             )
             .execute(&db)
             .await?;
         }
 
-        // todo
         let (progress, _) = records.progress();
         progress_bar.set_position(progress as _);
     }

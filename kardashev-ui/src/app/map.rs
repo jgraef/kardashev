@@ -43,12 +43,12 @@ pub fn Map() -> impl IntoView {
     ));
 
     // the teapot mesh doesn't work :/
-    /*let _teapot = world.spawn((
+    let _teapot = world.spawn((
         Transform {
             transform: Similarity3::identity(),
         },
         TEAPOT_MESH.clone(),
-    ));*/
+    ));
 
     let scene = Scene::new(world);
 

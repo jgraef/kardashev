@@ -17,12 +17,11 @@ use tokio::sync::{
 use web_sys::HtmlCanvasElement;
 use wgpu::{
     util::DeviceExt,
-    Instance,
-    Surface,
+    BindGroupLayoutDescriptor,
 };
 use winit::{
+    application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::Event,
     event_loop::{
         ActiveEventLoop,
         EventLoop,
@@ -38,6 +37,7 @@ use winit::{
 use super::{
     camera::Camera,
     mesh::Mesh,
+    texture::Texture,
     transform::Transform,
     window,
     Scene,
@@ -54,17 +54,20 @@ pub enum Error {
 
     #[error("failed to request device")]
     RequestDevice(#[from] wgpu::RequestDeviceError),
+
+    #[error("no such window: {0:?}")]
+    NoSuchWindow(WindowId),
 }
 
 enum Command {
     CreateWindow {
         canvas: HtmlCanvasElement,
-        instance: Arc<Instance>,
+        instance: Arc<wgpu::Instance>,
         tx_response: oneshot::Sender<CreateWindowResponse>,
     },
     InitializeWindow {
         window: Arc<Window>,
-        surface: Surface<'static>,
+        surface: wgpu::Surface<'static>,
         initial_size: PhysicalSize<u32>,
         scene_view: Option<SceneView>,
         tx_events: mpsc::Sender<window::Event>,
@@ -78,13 +81,15 @@ enum Command {
         scene_view: Option<SceneView>,
     },
     CreateTexture {
+        window_id: WindowId,
         image: RgbaImage,
+        tx_response: oneshot::Sender<Result<Texture, Error>>,
     },
 }
 
 struct CreateWindowResponse {
     window: Arc<Window>,
-    surface: Surface<'static>,
+    surface: wgpu::Surface<'static>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -117,15 +122,13 @@ impl SceneRenderer {
             let scene_renderer = scene_renderer.clone();
             async move {
                 #[allow(unused_mut, unused_variables)]
-                let mut state = RenderLoop::new(scene_renderer, config).await?;
+                let mut render_loop = RenderLoop::new(scene_renderer, config).await?;
 
                 #[cfg(target_arch = "wasm32")]
                 {
                     use winit::platform::web::EventLoopExtWebSys;
                     tracing::debug!("spawning window event loop");
-                    event_loop.spawn(move |event, target| {
-                        state.handle_event(event, target);
-                    });
+                    event_loop.spawn_app(render_loop);
                 }
 
                 Ok(())
@@ -161,7 +164,7 @@ impl SceneRenderer {
             tx_response,
         });
         let CreateWindowResponse { window, surface } =
-            rx_response.await.expect("tx_window dropped");
+            rx_response.await.expect("tx_response dropped");
 
         let render_context = match self.config.backend_type {
             BackendType::WebGpu => None,
@@ -192,6 +195,20 @@ impl SceneRenderer {
     pub(super) fn destroy_window(&self, window_id: WindowId) {
         self.send_command(Command::DestroyWindow { window_id });
     }
+
+    pub(super) async fn create_texture(
+        &self,
+        window_id: WindowId,
+        image: RgbaImage,
+    ) -> Result<Texture, Error> {
+        let (tx_response, rx_response) = oneshot::channel();
+        self.send_command(Command::CreateTexture {
+            window_id,
+            image,
+            tx_response,
+        });
+        rx_response.await.expect("tx_response dropped")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -220,9 +237,9 @@ impl RenderContext {
     }
 
     async fn new(
-        instance: Arc<Instance>,
+        instance: Arc<wgpu::Instance>,
         config: &SceneRendererConfig,
-        compatible_surface: Option<&Surface<'static>>,
+        compatible_surface: Option<&wgpu::Surface<'static>>,
     ) -> Result<Self, Error> {
         tracing::debug!("creating render adapter");
         let adapter = instance
@@ -297,99 +314,10 @@ impl RenderLoop {
         })
     }
 
-    fn handle_event(&mut self, event: Event<Command>, active_event_loop: &ActiveEventLoop) {
-        match event {
-            Event::WindowEvent { window_id, event } => {
-                tracing::debug!(?window_id, ?event, "window event");
-
-                if let Some(window) = self.windows.get_mut(&window_id) {
-                    match event {
-                        winit::event::WindowEvent::Resized(physical_size) => {
-                            tracing::debug!(?physical_size, "window resize");
-                            if physical_size.width > 0 && physical_size.height > 0 {
-                                window.config.width = physical_size.width;
-                                window.config.height = physical_size.height;
-                                window
-                                    .surface
-                                    .configure(&window.render_context.device, &window.config);
-                                // todo: update SceneView (camera)
-                            }
-                        }
-                        winit::event::WindowEvent::RedrawRequested => {
-                            if let Some(scene_view) = &window.scene_view {
-                                let texture = window
-                                    .surface
-                                    .get_current_texture()
-                                    .expect("get_current_texture failed");
-                                render_scene(
-                                    scene_view,
-                                    &texture.texture,
-                                    &window.render_context.device,
-                                    &window.render_context.queue,
-                                    &window.pipeline,
-                                    &window.render_buffer,
-                                );
-                                window.window.pre_present_notify();
-                                texture.present();
-                            }
-                        }
-                        _ => {}
-                    }
-                    //(window_state.event_handler)(&self.handle, event);
-                }
-            }
-            Event::UserEvent(command) => {
-                match command {
-                    Command::CreateWindow {
-                        canvas,
-                        instance,
-                        tx_response,
-                    } => self.create_window(canvas, instance, tx_response, active_event_loop),
-                    Command::InitializeWindow {
-                        window,
-                        surface,
-                        initial_size,
-                        scene_view,
-                        tx_events,
-                        render_context,
-                    } => {
-                        let render_context = render_context
-                            .map(Arc::new)
-                            .or_else(|| self.shared_context.clone())
-                            .expect("missing render context");
-                        self.initialize_window(
-                            window,
-                            surface,
-                            initial_size,
-                            scene_view,
-                            tx_events,
-                            render_context,
-                        );
-                    }
-                    Command::DestroyWindow { window_id } => {
-                        self.destroy_window(window_id);
-                    }
-                    Command::SetSceneView {
-                        window_id,
-                        scene_view,
-                    } => {
-                        if let Some(window) = self.windows.get_mut(&window_id) {
-                            window.scene_view = scene_view;
-                        }
-                    }
-                    Command::CreateTexture { image: _ } => {
-                        // todo
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn create_window(
         &self,
         canvas: HtmlCanvasElement,
-        instance: Arc<Instance>,
+        instance: Arc<wgpu::Instance>,
         tx_response: oneshot::Sender<CreateWindowResponse>,
         active_event_loop: &ActiveEventLoop,
     ) {
@@ -414,18 +342,139 @@ impl RenderLoop {
 
         let _ = tx_response.send(CreateWindowResponse { window, surface });
     }
+}
 
-    fn initialize_window(
+impl ApplicationHandler<Command> for RenderLoop {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn window_event(
         &mut self,
+        _event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: winit::event::WindowEvent,
+    ) {
+        tracing::debug!(?window_id, ?event, "window event");
+
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            match event {
+                winit::event::WindowEvent::Resized(physical_size) => {
+                    tracing::debug!(?physical_size, "window resize");
+                    if physical_size.width > 0 && physical_size.height > 0 {
+                        window.config.width = physical_size.width;
+                        window.config.height = physical_size.height;
+                        window
+                            .surface
+                            .configure(&window.render_context.device, &window.config);
+                        // todo: update SceneView (camera)
+                    }
+                }
+                winit::event::WindowEvent::RedrawRequested => {
+                    if let Some(scene_view) = &window.scene_view {
+                        let texture = window
+                            .surface
+                            .get_current_texture()
+                            .expect("get_current_texture failed");
+                        render_scene(
+                            scene_view,
+                            &texture.texture,
+                            &window.render_context.device,
+                            &window.render_context.queue,
+                            &window.pipeline,
+                            &window.render_buffer,
+                        );
+                        window.window.pre_present_notify();
+                        texture.present();
+                    }
+                }
+                _ => {}
+            }
+
+            //window.tx_events.send()
+        }
+    }
+
+    fn user_event(&mut self, active_event_loop: &ActiveEventLoop, command: Command) {
+        match command {
+            Command::CreateWindow {
+                canvas,
+                instance,
+                tx_response,
+            } => self.create_window(canvas, instance, tx_response, active_event_loop),
+            Command::InitializeWindow {
+                window,
+                surface,
+                initial_size,
+                scene_view,
+                tx_events,
+                render_context,
+            } => {
+                let render_context = render_context
+                    .map(Arc::new)
+                    .or_else(|| self.shared_context.clone())
+                    .expect("missing render context");
+
+                self.windows.insert(
+                    window.id(),
+                    WindowState::new(
+                        window,
+                        surface,
+                        initial_size,
+                        scene_view,
+                        tx_events,
+                        render_context,
+                    ),
+                );
+            }
+            Command::DestroyWindow { window_id } => {
+                if let Some(_window) = self.windows.remove(&window_id) {
+                    // we think we can just drop everything
+                }
+            }
+            Command::SetSceneView {
+                window_id,
+                scene_view,
+            } => {
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.scene_view = scene_view;
+                }
+            }
+            Command::CreateTexture {
+                window_id,
+                image,
+                tx_response,
+            } => {
+                let texture = self
+                    .windows
+                    .get(&window_id)
+                    .map(|window| window.create_texture(image))
+                    .ok_or_else(|| Error::NoSuchWindow(window_id));
+                let _ = tx_response.send(texture);
+            }
+        }
+    }
+}
+
+struct WindowState {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    scene_view: Option<SceneView>,
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    render_buffer: RenderBuffer,
+    tx_events: mpsc::Sender<window::Event>,
+    render_context: Arc<RenderContext>,
+}
+
+impl WindowState {
+    fn new(
         window: Arc<Window>,
-        surface: Surface<'static>,
+        surface: wgpu::Surface<'static>,
         initial_size: PhysicalSize<u32>,
         scene_view: Option<SceneView>,
         tx_events: mpsc::Sender<window::Event>,
         render_context: Arc<RenderContext>,
-    ) {
-        let window_id = window.id();
-
+    ) -> Self {
         let surface_caps = surface.get_capabilities(&render_context.adapter);
         // Shader code in this tutorial assumes an sRGB surface texture. Using a
         // different one will result in all the colors
@@ -506,6 +555,33 @@ impl RenderLoop {
                     cache: None,
                 });
 
+        let bind_group_layout =
+            render_context
+                .device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            // This should match the filterable field of the
+                            // corresponding Texture entry above.
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
         const VERTICES: &[Vertex] = &[
             Vertex {
                 position: [-0.0868241, 0.49240386, 0.0],
@@ -555,37 +631,47 @@ impl RenderLoop {
 
         // finish
 
-        self.windows.insert(
-            window_id,
-            WindowState {
-                window,
-                surface,
-                config,
-                scene_view,
-                pipeline,
-                render_buffer,
-                tx_events,
-                render_context,
-            },
-        );
-    }
-
-    fn destroy_window(&mut self, window_id: WindowId) {
-        if let Some(_window) = self.windows.remove(&window_id) {
-            // we think we can just drop everything
+        WindowState {
+            window,
+            surface,
+            config,
+            scene_view,
+            pipeline,
+            bind_group_layout,
+            render_buffer,
+            tx_events,
+            render_context,
         }
     }
-}
 
-struct WindowState {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    scene_view: Option<SceneView>,
-    pipeline: wgpu::RenderPipeline,
-    render_buffer: RenderBuffer,
-    tx_events: mpsc::Sender<window::Event>,
-    render_context: Arc<RenderContext>,
+    fn create_texture(&self, image: RgbaImage) -> Texture {
+        let image_size = image.dimensions();
+        let texture_size = wgpu::Extent3d {
+            width: image_size.0,
+            height: image_size.1,
+            depth_or_array_layers: 1,
+        };
+
+        let inner = self.render_context.device.create_texture_with_data(
+            &self.render_context.queue,
+            &wgpu::TextureDescriptor {
+                size: texture_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: None,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::default(),
+            image.as_raw(),
+        );
+
+        Texture {
+            inner: Arc::new(inner),
+        }
+    }
 }
 
 #[derive(Clone)]

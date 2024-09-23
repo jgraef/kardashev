@@ -26,6 +26,7 @@ pub struct Args {
     #[arg(long, short)]
     config: PathBuf,
 
+    #[arg(long = "gaia", short)]
     gaia_path: PathBuf,
 }
 
@@ -41,11 +42,9 @@ impl Args {
             toml::from_str(&toml)?
         };
 
-        std::fs::create_dir(&self.output)?;
-
         crate::pack::pack(config, &self.output, &self.gaia_path).await?;
 
-        todo!();
+        Ok(())
     }
 }
 

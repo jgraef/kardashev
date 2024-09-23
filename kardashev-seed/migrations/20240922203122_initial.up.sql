@@ -1,5 +1,5 @@
 CREATE TABLE star (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     position_x REAL NOT NULL,
     position_y REAL NOT NULL,
     position_z REAL NOT NULL,
@@ -10,5 +10,8 @@ CREATE TABLE star (
     mass REAL NOT NULL,
     age REAL NOT NULL,
     type INTEGER,
-    name TEXT
+    name TEXT,
+    healpix_start INTEGER,
+    healpix_end INTEGER,
+    source_id INTEGER
 );

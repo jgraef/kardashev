@@ -25,6 +25,7 @@ tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "signal"]
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+uuid = { version = "1.10.0", features = ["v4"] }
 
 [build-dependencies]
 sqlx = { version = "0.8.2", features = ["migrate", "runtime-tokio", "sqlite"] }

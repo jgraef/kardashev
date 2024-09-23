@@ -4,14 +4,9 @@ use kardashev_client::Client;
 use leptos::{
     component,
     view,
-    DynAttrs,
     IntoView,
-    Oco,
 };
-use leptos_meta::{
-    provide_meta_context,
-    Html,
-};
+use leptos_meta::provide_meta_context;
 use leptos_router::{
     Redirect,
     Route,
