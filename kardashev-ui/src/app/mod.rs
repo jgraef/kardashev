@@ -1,4 +1,4 @@
-mod main;
+mod map;
 
 use kardashev_client::Client;
 use leptos::{
@@ -13,14 +13,18 @@ use leptos_meta::{
     Html,
 };
 use leptos_router::{
+    Redirect,
     Route,
     Router,
     Routes,
 };
 use url::Url;
 
-use self::main::MainPage;
-use crate::components::dock::Dock;
+use self::map::Map;
+use crate::{
+    components::dock::Dock,
+    scene::renderer::SceneRenderer,
+};
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
 
@@ -37,18 +41,18 @@ fn get_api_url() -> Url {
 #[derive(Clone)]
 pub struct Context {
     pub client: Client,
-    //pub scene_renderer: SceneRenderer,
+    pub scene_renderer: SceneRenderer,
 }
 
 fn provide_context() -> Context {
     let client = Client::new(get_api_url());
 
     //tracing::debug!("creating scene renderer");
-    //let scene_renderer = SceneRenderer::new(Default::default());
+    let scene_renderer = SceneRenderer::new(Default::default());
 
     let context = Context {
         client,
-        //scene_renderer,
+        scene_renderer,
     };
 
     leptos::provide_context(context.clone());
@@ -71,7 +75,9 @@ pub fn App() -> impl IntoView {
                 <Dock />
                 <main class=style::main>
                     <Routes>
-                        <Route path="/" view=|| view!{ "Hello World" } />
+                        <Route path="/" view=|| view!{ <Redirect path="/dashboard"/> } />
+                        <Route path="/dashboard" view=|| view!{ "TODO: Dashboard" } />
+                        <Route path="/map" view=Map />
                     </Routes>
                 </main>
             </div>

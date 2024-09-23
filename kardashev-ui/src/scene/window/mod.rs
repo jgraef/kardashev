@@ -16,7 +16,10 @@ use std::{
 use futures::Stream;
 use tokio::sync::mpsc;
 
-use super::renderer::SceneRenderer;
+use super::renderer::{
+    RenderContext,
+    SceneRenderer,
+};
 
 pub mod leptos;
 

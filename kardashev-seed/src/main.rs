@@ -1,95 +1,51 @@
 #![feature(btree_cursors)]
 
+mod config;
 mod gaia;
+mod pack;
 mod render;
 mod utils;
 
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::Error;
-use gaia::Data;
-use indicatif::{
-    ProgressBar,
-    ProgressStyle,
-};
 use nalgebra::{
     Point3,
     Rotation3,
     Vector3,
 };
-use sqlx::SqlitePool;
+
+use crate::config::Config;
 
 #[derive(Debug, Parser)]
 pub struct Args {
-    #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
+    #[arg(long, short)]
+    output: PathBuf,
 
-    #[command(subcommand)]
-    command: Command,
-}
+    #[arg(long, short)]
+    config: PathBuf,
 
-#[derive(Debug, Parser)]
-enum Command {
-    Render {
-        #[arg(short, long)]
-        output: PathBuf,
-        path: PathBuf,
-        #[arg(short, long, default_value = "top-down")]
-        view: render::View,
-        #[arg(short, long, default_value = "1024")]
-        width: u32,
-    },
-    Export {
-        #[arg(short, long)]
-        output: PathBuf,
-        path: PathBuf,
-        #[arg(short, long, default_value = "1024")]
-        limit_per_file: u64,
-    },
-    Import {
-        path: PathBuf,
-        database: PathBuf,
-        threads: Option<usize>,
-        buf_size: Option<usize>,
-    },
+    gaia_path: PathBuf,
 }
 
 impl Args {
     async fn run(self) -> Result<(), Error> {
-        //let mut db = PgPool::connect(&self.database_url).await?;
-
-        match self.command {
-            Command::Render {
-                output,
-                path,
-                view,
-                width,
-            } => {
-                render::render(output, path, view, width).await?;
-            }
-            Command::Export {
-                output,
-                path,
-                limit_per_file,
-            } => {
-                render::export(output, path, limit_per_file).await?;
-            }
-            Command::Import {
-                path,
-                database,
-                threads,
-                buf_size,
-            } => {
-                //import(path, database, threads, buf_size).await?;
-                todo!();
-            }
+        if self.output.exists() {
+            tracing::error!(path = %self.output.display(), "File or directory already exists");
+            return Ok(());
         }
 
-        Ok(())
+        let config: Config = {
+            let toml = std::fs::read_to_string(&self.config)?;
+            toml::from_str(&toml)?
+        };
+
+        std::fs::create_dir(&self.output)?;
+
+        crate::pack::pack(config, &self.output, &self.gaia_path).await?;
+
+        todo!();
     }
 }
 

@@ -1,3 +1,6 @@
+use std::ops::Deref;
+
+use futures::StreamExt;
 use leptos::{
     component,
     create_node_ref,
@@ -5,16 +8,27 @@ use leptos::{
         Canvas,
         Div,
     },
+    spawn_local,
     view,
     IntoView,
+    StoredValue,
 };
 use leptos_use::{
+    signal_debounced,
     use_element_size_with_options,
     UseElementSizeOptions,
 };
 use web_sys::ResizeObserverBoxOptions;
 
-use crate::scene::renderer::SceneView;
+use crate::{
+    app::{
+        expect_context,
+        Context,
+    },
+    scene::renderer::SceneView,
+};
+
+stylance::import_crate_style!(style, "src/scene/window/window.module.scss");
 
 /// A window (i.e. a HTML canvas) to which a scene is rendered.
 /// This creates a container (div) that can be sized using CSS. The canvas will
@@ -26,15 +40,14 @@ use crate::scene::renderer::SceneView;
 /// - Add event handler property
 #[component]
 pub fn Window(#[prop(optional)] scene_view: Option<SceneView>) -> impl IntoView {
-    let _ = scene_view;
-    //let Context { scene_renderer, .. } = expect_context();
+    let Context { scene_renderer, .. } = expect_context();
 
     let container_node_ref = create_node_ref::<Div>();
     let canvas_node_ref = create_node_ref::<Canvas>();
-    //let window_handle = StoredValue::new(None);
+    let window_handle = StoredValue::new(None);
 
-    canvas_node_ref.on_load(move |_canvas| {
-        /*spawn_local(async move {
+    canvas_node_ref.on_load(move |canvas| {
+        spawn_local(async move {
             let (window, mut events) = scene_renderer
                 .create_window(canvas.deref().clone(), scene_view)
                 .await;
@@ -46,23 +59,25 @@ pub fn Window(#[prop(optional)] scene_view: Option<SceneView>) -> impl IntoView 
                     // todo
                 }
             }
-        })*/
+        })
     });
 
     let container_size = use_element_size_with_options(
         container_node_ref,
         UseElementSizeOptions::default().box_(ResizeObserverBoxOptions::ContentBox),
     );
+    let width = signal_debounced(container_size.width, 1000.);
+    let height = signal_debounced(container_size.height, 1000.);
 
     view! {
         <div
             node_ref=container_node_ref
-            class="window"
+            class=style::window
         >
             <canvas
                 node_ref=canvas_node_ref
-                width=container_size.width
-                height=container_size.height
+                width=width
+                height=height
             ></canvas>
         </div>
     }

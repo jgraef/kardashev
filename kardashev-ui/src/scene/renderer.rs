@@ -15,7 +15,11 @@ use tokio::sync::{
     oneshot,
 };
 use web_sys::HtmlCanvasElement;
-use wgpu::util::DeviceExt;
+use wgpu::{
+    util::DeviceExt,
+    Instance,
+    Surface,
+};
 use winit::{
     dpi::PhysicalSize,
     event::Event,
@@ -55,9 +59,16 @@ pub enum Error {
 enum Command {
     CreateWindow {
         canvas: HtmlCanvasElement,
+        instance: Arc<Instance>,
+        tx_response: oneshot::Sender<CreateWindowResponse>,
+    },
+    InitializeWindow {
+        window: Arc<Window>,
+        surface: Surface<'static>,
+        initial_size: PhysicalSize<u32>,
         scene_view: Option<SceneView>,
-        tx_window: oneshot::Sender<Arc<Window>>,
         tx_events: mpsc::Sender<window::Event>,
+        render_context: Option<RenderContext>,
     },
     DestroyWindow {
         window_id: WindowId,
@@ -71,24 +82,36 @@ enum Command {
     },
 }
 
+struct CreateWindowResponse {
+    window: Arc<Window>,
+    surface: Surface<'static>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SceneRendererConfig {
     pub power_preference: wgpu::PowerPreference,
+    pub backend_type: BackendType,
 }
 
 #[derive(Clone)]
 pub struct SceneRenderer {
+    config: Arc<SceneRendererConfig>,
     proxy: EventLoopProxy<Command>,
 }
 
 impl SceneRenderer {
     pub fn new(config: SceneRendererConfig) -> Self {
+        let config = Arc::new(config);
+
         let event_loop = EventLoop::with_user_event()
             .build()
             .expect("failed to create event loop");
         let proxy = event_loop.create_proxy();
 
-        let scene_renderer = Self { proxy };
+        let scene_renderer = Self {
+            config: config.clone(),
+            proxy,
+        };
 
         spawn_local_and_handle_error::<_, Error>({
             let scene_renderer = scene_renderer.clone();
@@ -121,25 +144,45 @@ impl SceneRenderer {
         canvas: HtmlCanvasElement,
         scene_view: Option<SceneView>,
     ) -> (window::Window, window::Events) {
-        // todo:
-        // - make this method async
-        // - remove the event handler
-        // - make a oneshot to receive the Arc<Window> or the WindowId
-        // - make a mpsc to receive events
-        // - return (oneshot, mpsc)
-        // - take a web_sys::HtmlCanvasElement
-
-        let (tx_window, rx_window) = oneshot::channel();
+        let (tx_response, rx_response) = oneshot::channel();
         let (tx_events, rx_events) = mpsc::channel(32);
+
+        tracing::debug!("creating WebGL instance");
+        let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::GL,
+            ..Default::default()
+        }));
+
+        let initial_size = canvas_size(&canvas);
 
         self.send_command(Command::CreateWindow {
             canvas,
+            instance: instance.clone(),
+            tx_response,
+        });
+        let CreateWindowResponse { window, surface } =
+            rx_response.await.expect("tx_window dropped");
+
+        let render_context = match self.config.backend_type {
+            BackendType::WebGpu => None,
+            BackendType::WebGl => {
+                Some(
+                    RenderContext::new(instance, &self.config, Some(&surface))
+                        .await
+                        .expect("todo: handle error"),
+                )
+            }
+        };
+
+        self.send_command(Command::InitializeWindow {
+            window: window.clone(),
+            surface,
+            initial_size,
             scene_view,
-            tx_window,
             tx_events,
+            render_context,
         });
 
-        let window = rx_window.await.expect("tx_window dropped");
         let window = window::Window::new(self.clone(), window);
         let events = window::Events::new(rx_events);
 
@@ -151,31 +194,48 @@ impl SceneRenderer {
     }
 }
 
-struct RenderLoop {
-    scene_renderer: SceneRenderer,
-    instance: wgpu::Instance,
+#[derive(Clone, Copy, Debug, Default)]
+pub enum BackendType {
+    WebGpu,
+    #[default]
+    WebGl,
+}
+
+#[derive(Debug)]
+pub(super) struct RenderContext {
+    instance: Arc<wgpu::Instance>,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    windows: HashMap<WindowId, WindowState>,
 }
 
-impl RenderLoop {
-    async fn new(
-        scene_renderer: SceneRenderer,
-        config: SceneRendererConfig,
-    ) -> Result<Self, Error> {
-        tracing::debug!("creating webgpu instance");
+impl RenderContext {
+    async fn webgpu_shared(config: &SceneRendererConfig) -> Result<Self, Error> {
+        tracing::debug!("creating WEBGPU instance");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
         });
+        Self::new(Arc::new(instance), config, None).await
+    }
 
-        tracing::debug!("creating webgpu adapter");
+    async fn new(
+        instance: Arc<Instance>,
+        config: &SceneRendererConfig,
+        compatible_surface: Option<&Surface<'static>>,
+    ) -> Result<Self, Error> {
+        tracing::debug!("creating render adapter");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: config.power_preference,
-                compatible_surface: None,
+                // FIXME
+                // we need to set a surface here (a MUST for WebGL), but to create the surface, we
+                // need the window first. we can split window creation into several
+                // steps:
+                // 1. create the window and nothing else (via command to the event loop)
+                // 2. create render context (instance, adapter, etc.), if using WebGL
+                // 3. create surface (i.e. connect wgpu to the window)
+                compatible_surface: compatible_surface,
                 force_fallback_adapter: false,
             })
             .await
@@ -198,11 +258,41 @@ impl RenderLoop {
         }));
 
         Ok(Self {
-            scene_renderer,
             instance,
             adapter,
             device,
             queue,
+        })
+    }
+}
+
+struct RenderLoop {
+    config: Arc<SceneRendererConfig>,
+    scene_renderer: SceneRenderer,
+    shared_context: Option<Arc<RenderContext>>,
+    windows: HashMap<WindowId, WindowState>,
+}
+
+impl RenderLoop {
+    async fn new(
+        scene_renderer: SceneRenderer,
+        config: Arc<SceneRendererConfig>,
+    ) -> Result<Self, Error> {
+        let shared_context = match config.backend_type {
+            BackendType::WebGpu => {
+                // WebGPU (and really all backends except webgl can reuse the context)
+                Some(Arc::new(RenderContext::webgpu_shared(&config).await?))
+            }
+            BackendType::WebGl => {
+                // for WebGL we have to create a render context for each surface
+                None
+            }
+        };
+
+        Ok(Self {
+            config,
+            scene_renderer,
+            shared_context,
             windows: Default::default(),
         })
     }
@@ -219,7 +309,9 @@ impl RenderLoop {
                             if physical_size.width > 0 && physical_size.height > 0 {
                                 window.config.width = physical_size.width;
                                 window.config.height = physical_size.height;
-                                window.surface.configure(&self.device, &window.config);
+                                window
+                                    .surface
+                                    .configure(&window.render_context.device, &window.config);
                                 // todo: update SceneView (camera)
                             }
                         }
@@ -232,8 +324,8 @@ impl RenderLoop {
                                 render_scene(
                                     scene_view,
                                     &texture.texture,
-                                    &self.device,
-                                    &self.queue,
+                                    &window.render_context.device,
+                                    &window.render_context.queue,
                                     &window.pipeline,
                                     &window.render_buffer,
                                 );
@@ -250,16 +342,28 @@ impl RenderLoop {
                 match command {
                     Command::CreateWindow {
                         canvas,
+                        instance,
+                        tx_response,
+                    } => self.create_window(canvas, instance, tx_response, active_event_loop),
+                    Command::InitializeWindow {
+                        window,
+                        surface,
+                        initial_size,
                         scene_view,
-                        tx_window,
                         tx_events,
+                        render_context,
                     } => {
-                        self.create_window(
-                            &active_event_loop,
-                            canvas,
+                        let render_context = render_context
+                            .map(Arc::new)
+                            .or_else(|| self.shared_context.clone())
+                            .expect("missing render context");
+                        self.initialize_window(
+                            window,
+                            surface,
+                            initial_size,
                             scene_view,
-                            tx_window,
                             tx_events,
+                            render_context,
                         );
                     }
                     Command::DestroyWindow { window_id } => {
@@ -283,38 +387,46 @@ impl RenderLoop {
     }
 
     fn create_window(
-        &mut self,
-        active_event_loop: &ActiveEventLoop,
+        &self,
         canvas: HtmlCanvasElement,
-        scene_view: Option<SceneView>,
-        tx_window: oneshot::Sender<Arc<Window>>,
-        tx_events: mpsc::Sender<window::Event>,
+        instance: Arc<Instance>,
+        tx_response: oneshot::Sender<CreateWindowResponse>,
+        active_event_loop: &ActiveEventLoop,
     ) {
-        // create window
-
-        let size = PhysicalSize::new(canvas.width(), canvas.height());
-
         #[allow(unused_mut)]
         let mut window_attributes = WindowAttributes::default();
+        #[allow(unused_variables)]
+        let canvas = canvas;
+
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowAttributesExtWebSys;
             window_attributes = window_attributes.with_canvas(Some(canvas));
         }
-
         let window = active_event_loop
             .create_window(window_attributes)
             .expect("failed to create window");
         let window = Arc::new(window);
-        let window_id = window.id();
-        let _ = tx_window.send(window.clone());
 
-        let surface = self
-            .instance
+        let surface = instance
             .create_surface(window.clone())
             .expect("failed to create surface");
 
-        let surface_caps = surface.get_capabilities(&self.adapter);
+        let _ = tx_response.send(CreateWindowResponse { window, surface });
+    }
+
+    fn initialize_window(
+        &mut self,
+        window: Arc<Window>,
+        surface: Surface<'static>,
+        initial_size: PhysicalSize<u32>,
+        scene_view: Option<SceneView>,
+        tx_events: mpsc::Sender<window::Event>,
+        render_context: Arc<RenderContext>,
+    ) {
+        let window_id = window.id();
+
+        let surface_caps = surface.get_capabilities(&render_context.adapter);
         // Shader code in this tutorial assumes an sRGB surface texture. Using a
         // different one will result in all the colors
         // coming out darker. If you want to support non
@@ -329,68 +441,70 @@ impl RenderLoop {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width,
-            height: size.height,
+            width: initial_size.width,
+            height: initial_size.height,
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&self.device, &config);
+        surface.configure(&render_context.device, &config);
 
         // create render pipeline
 
-        let shader = self
+        let shader = render_context
             .device
             .create_shader_module(wgpu::include_wgsl!("shader/shader.wgsl"));
 
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
-                push_constant_ranges: &[],
-            });
+        let pipeline_layout =
+            render_context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Render Pipeline Layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
 
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Render Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &[Vertex::layout()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: config.format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let pipeline =
+            render_context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Render Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: "vs_main",
+                        buffers: &[Vertex::layout()],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: "fs_main",
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: config.format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview: None,
+                    cache: None,
+                });
 
         const VERTICES: &[Vertex] = &[
             Vertex {
@@ -414,22 +528,24 @@ impl RenderLoop {
                 color: [0.5, 0.0, 0.5],
             }, // E
         ];
-        let vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(VERTICES),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let vertex_buffer =
+            render_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Vertex Buffer"),
+                    contents: bytemuck::cast_slice(VERTICES),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
 
         const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
-        let index_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(INDICES),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let index_buffer =
+            render_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Index Buffer"),
+                    contents: bytemuck::cast_slice(INDICES),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
 
         let render_buffer = RenderBuffer {
             vertex_buffer,
@@ -449,6 +565,7 @@ impl RenderLoop {
                 pipeline,
                 render_buffer,
                 tx_events,
+                render_context,
             },
         );
     }
@@ -468,6 +585,7 @@ struct WindowState {
     pipeline: wgpu::RenderPipeline,
     render_buffer: RenderBuffer,
     tx_events: mpsc::Sender<window::Event>,
+    render_context: Arc<RenderContext>,
 }
 
 #[derive(Clone)]
@@ -581,4 +699,10 @@ fn convert_color_palette_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
         b: color.blue,
         a: color.alpha,
     }
+}
+
+fn canvas_size(canvas: &HtmlCanvasElement) -> PhysicalSize<u32> {
+    let width = std::cmp::max(1, canvas.width());
+    let height = std::cmp::max(1, canvas.height());
+    PhysicalSize::new(width, height)
 }
