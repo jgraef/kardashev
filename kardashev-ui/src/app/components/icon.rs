@@ -7,7 +7,7 @@ use leptos::{
     SignalGet,
 };
 
-stylance::import_crate_style!(style, "src/components/icon.module.scss");
+stylance::import_crate_style!(style, "src/app/components/icon.module.scss");
 
 #[component]
 pub fn BootstrapIcon(

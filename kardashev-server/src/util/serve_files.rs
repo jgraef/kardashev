@@ -15,11 +15,11 @@ use axum::{
     http::Request,
 };
 use notify_async::watch_modified;
+use tower::Service;
 use tower_http::services::{
     ServeDir,
     ServeFile,
 };
-use tower_service::Service;
 
 use crate::error::Error;
 

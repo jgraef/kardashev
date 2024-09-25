@@ -6,10 +6,12 @@ pub mod utils;
 
 use std::path::PathBuf;
 
+use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::Error;
 use kardashev_client::Client;
 use url::Url;
+use utils::format_uptime;
 
 use crate::import_stars::import_stars;
 
@@ -29,6 +31,9 @@ pub enum Command {
 
         #[arg(long, default_value = "100")]
         batch_size: usize,
+
+        #[arg(long)]
+        num_closest: Option<usize>,
     },
 }
 
@@ -37,13 +42,21 @@ impl Args {
         let api = Client::new(self.api_url);
 
         let status = api.status().await?;
-        tracing::info!(?status);
+        println!("Server version: {}", status.server_version);
+        let uptime = Utc::now() - status.up_since;
+        println!(
+            "Uptime: {} (since {})",
+            format_uptime(uptime),
+            status.up_since
+        );
 
         if let Some(command) = self.command {
             match command {
-                Command::ImportStars { path, batch_size } => {
-                    import_stars(&api, path, batch_size).await?
-                }
+                Command::ImportStars {
+                    path,
+                    batch_size,
+                    num_closest,
+                } => import_stars(&api, path, batch_size, num_closest).await?,
             }
         }
 

@@ -6,7 +6,13 @@ use std::{
     },
 };
 
-use axum::Router;
+use axum::{
+    extract::{
+        MatchedPath,
+        Request,
+    },
+    Router,
+};
 use chrono::{
     DateTime,
     Utc,
@@ -17,6 +23,12 @@ use sqlx::{
 };
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tower::ServiceBuilder;
+use tower_http::trace::{
+    DefaultOnRequest,
+    DefaultOnResponse,
+    TraceLayer,
+};
 
 use crate::{
     api,
@@ -40,9 +52,28 @@ impl Server {
         let serve_assets = serve_assets()?;
 
         let router = Router::new()
-            .nest("/api", api::router())
+            .nest("/api/v0", api::router())
             .nest_service("/assets", serve_assets)
             .fallback_service(serve_ui)
+            .layer(
+                ServiceBuilder::new().layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|req: &Request| {
+                            let method = req.method();
+                            let uri = req.uri();
+
+                            // axum automatically adds this extension.
+                            let matched_path = req
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map(|matched_path| matched_path.as_str());
+
+                            tracing::info_span!("request", %method, %uri, matched_path)
+                        })
+                        .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                ),
+            )
             .with_state(Context {
                 db,
                 up_since: Utc::now(),

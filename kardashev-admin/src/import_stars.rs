@@ -13,7 +13,10 @@ use kardashev_protocol::{
 use nalgebra::Point3;
 
 use crate::{
-    catalog::hyg,
+    catalog::hyg::{
+        self,
+        Record,
+    },
     utils::teff_color::teff_color,
     Error,
 };
@@ -22,6 +25,7 @@ pub async fn import_stars(
     api: &Client,
     path: impl AsRef<Path>,
     batch_size: usize,
+    num_closest: Option<usize>,
 ) -> Result<(), Error> {
     let reader = hyg::Reader::open(path)?;
 
@@ -31,15 +35,21 @@ pub async fn import_stars(
             .unwrap()
             .tick_strings(&["-", "\\", "|", "/"]),
     );
-    pb.set_message("starting...");
+    pb.set_message("reading stars...");
 
-    let chunks = reader.chunks(batch_size);
+    let mut stars = reader.collect::<Result<Vec<Record>, Error>>()?;
+    if let Some(num_closest) = num_closest {
+        if num_closest < stars.len() {
+            stars.sort_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap());
+            stars.resize_with(num_closest, || unreachable!());
+        }
+    }
+
+    let chunks = stars.into_iter().chunks(batch_size);
     for chunk in &chunks {
         let mut batch = vec![];
 
-        for result in chunk {
-            let record = result?;
-
+        for record in chunk {
             let Some(spect) = record.spect
             else {
                 continue;

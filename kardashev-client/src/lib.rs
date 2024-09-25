@@ -6,7 +6,11 @@ use kardashev_protocol::{
         CreateStarsRequest,
         CreateStarsResponse,
     },
-    model::star::StarId,
+    model::star::{
+        Star,
+        StarId,
+    },
+    GetStarsResponse,
     ServerStatus,
 };
 use url::Url;
@@ -50,7 +54,7 @@ impl Client {
     pub async fn create_stars(&self, stars: Vec<CreateStar>) -> Result<Vec<StarId>, Error> {
         let response: CreateStarsResponse = self
             .client
-            .post(self.url().add("admin").add("stars").build())
+            .post(self.url().add("admin").add("star").build())
             .json(&CreateStarsRequest { stars })
             .send()
             .await?
@@ -58,6 +62,18 @@ impl Client {
             .json()
             .await?;
         Ok(response.ids)
+    }
+
+    pub async fn get_stars(&self) -> Result<Vec<Star>, Error> {
+        let response: GetStarsResponse = self
+            .client
+            .get(self.url().add("star").build())
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(response.stars)
     }
 }
 

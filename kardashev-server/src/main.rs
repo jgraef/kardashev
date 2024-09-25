@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use server::Server;
 use sqlx::PgPool;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -22,7 +23,10 @@ struct Args {
 async fn main() -> Result<(), color_eyre::eyre::Error> {
     dotenvy::dotenv().ok();
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .pretty()
+        .init();
 
     let args = Args::parse();
 

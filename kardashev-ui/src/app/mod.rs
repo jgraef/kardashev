@@ -1,5 +1,12 @@
+mod components;
 mod map;
 
+use std::sync::{
+    Arc,
+    RwLock,
+};
+
+use hecs::World;
 use kardashev_client::Client;
 use leptos::{
     component,
@@ -17,8 +24,8 @@ use url::Url;
 
 use self::map::Map;
 use crate::{
-    components::dock::Dock,
-    scene::renderer::SceneRenderer,
+    app::components::dock::Dock,
+    renderer::Renderer,
 };
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
@@ -36,33 +43,40 @@ fn get_api_url() -> Url {
 #[derive(Clone)]
 pub struct Context {
     pub client: Client,
-    pub scene_renderer: SceneRenderer,
+    pub renderer: Renderer,
+    pub world: Arc<RwLock<World>>,
 }
 
-fn provide_context() -> Context {
-    let client = Client::new(get_api_url());
+impl Context {
+    fn provide() -> Self {
+        let client = Client::new(get_api_url());
 
-    //tracing::debug!("creating scene renderer");
-    let scene_renderer = SceneRenderer::new(Default::default());
+        tracing::debug!("creating renderer");
+        let renderer = Renderer::new(Default::default());
 
-    let context = Context {
-        client,
-        scene_renderer,
-    };
+        tracing::debug!("creating world");
+        let world = World::new();
 
-    leptos::provide_context(context.clone());
+        let context = Self {
+            client,
+            renderer,
+            world: Arc::new(RwLock::new(world)),
+        };
 
-    context
-}
+        leptos::provide_context(context.clone());
 
-pub fn expect_context() -> Context {
-    leptos::expect_context()
+        context
+    }
+
+    pub fn get() -> Self {
+        leptos::expect_context()
+    }
 }
 
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
-    provide_context();
+    Context::provide();
 
     view! {
         <Router>

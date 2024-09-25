@@ -43,6 +43,12 @@ impl From<Point3<f32>> for Vec3 {
     }
 }
 
+impl From<Vec3> for Point3<f32> {
+    fn from(value: Vec3) -> Self {
+        Point3::from(Vector3::from(value))
+    }
+}
+
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "vec3")]
 struct Vec3Adapter {

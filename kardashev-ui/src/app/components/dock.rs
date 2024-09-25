@@ -11,7 +11,7 @@ use leptos_router::{
 
 use super::icon::BootstrapIcon;
 
-stylance::import_crate_style!(style, "src/components/dock.module.scss");
+stylance::import_crate_style!(style, "src/app/components/dock.module.scss");
 
 #[component]
 pub fn Item<H: ToHref + 'static>(

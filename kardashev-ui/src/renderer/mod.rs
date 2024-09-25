@@ -1,13 +1,25 @@
+pub mod camera;
+pub mod mesh;
+pub mod texture;
+pub mod transform;
+pub mod window;
+
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        RwLock,
+    },
 };
 
 use bytemuck::{
     Pod,
     Zeroable,
 };
-use hecs::Entity;
+use hecs::{
+    Entity,
+    World,
+};
 use image::RgbaImage;
 use palette::Srgba;
 use tokio::sync::{
@@ -34,13 +46,11 @@ use winit::{
     },
 };
 
-use super::{
+use self::{
     camera::Camera,
     mesh::Mesh,
     texture::Texture,
     transform::Transform,
-    window,
-    Scene,
 };
 use crate::utils::spawn_local_and_handle_error;
 
@@ -69,16 +79,16 @@ enum Command {
         window: Arc<Window>,
         surface: wgpu::Surface<'static>,
         initial_size: PhysicalSize<u32>,
-        scene_view: Option<SceneView>,
+        scene: Option<Scene>,
         tx_events: mpsc::Sender<window::Event>,
         render_context: Option<RenderContext>,
     },
     DestroyWindow {
         window_id: WindowId,
     },
-    SetSceneView {
+    SetScene {
         window_id: WindowId,
-        scene_view: Option<SceneView>,
+        scene: Option<Scene>,
     },
     CreateTexture {
         window_id: WindowId,
@@ -93,19 +103,19 @@ struct CreateWindowResponse {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct SceneRendererConfig {
+pub struct RendererConfig {
     pub power_preference: wgpu::PowerPreference,
     pub backend_type: BackendType,
 }
 
 #[derive(Clone)]
-pub struct SceneRenderer {
-    config: Arc<SceneRendererConfig>,
+pub struct Renderer {
+    config: Arc<RendererConfig>,
     proxy: EventLoopProxy<Command>,
 }
 
-impl SceneRenderer {
-    pub fn new(config: SceneRendererConfig) -> Self {
+impl Renderer {
+    pub fn new(config: RendererConfig) -> Self {
         let config = Arc::new(config);
 
         let event_loop = EventLoop::with_user_event()
@@ -113,16 +123,16 @@ impl SceneRenderer {
             .expect("failed to create event loop");
         let proxy = event_loop.create_proxy();
 
-        let scene_renderer = Self {
+        let renderer = Self {
             config: config.clone(),
             proxy,
         };
 
         spawn_local_and_handle_error::<_, Error>({
-            let scene_renderer = scene_renderer.clone();
+            let renderer = renderer.clone();
             async move {
                 #[allow(unused_mut, unused_variables)]
-                let mut render_loop = RenderLoop::new(scene_renderer, config).await?;
+                let mut render_loop = RenderLoop::new(renderer, config).await?;
 
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -135,7 +145,7 @@ impl SceneRenderer {
             }
         });
 
-        scene_renderer
+        renderer
     }
 
     fn send_command(&self, command: Command) {
@@ -145,7 +155,7 @@ impl SceneRenderer {
     pub async fn create_window(
         &self,
         canvas: HtmlCanvasElement,
-        scene_view: Option<SceneView>,
+        scene: Option<Scene>,
     ) -> (window::Window, window::Events) {
         let (tx_response, rx_response) = oneshot::channel();
         let (tx_events, rx_events) = mpsc::channel(32);
@@ -181,7 +191,7 @@ impl SceneRenderer {
             window: window.clone(),
             surface,
             initial_size,
-            scene_view,
+            scene,
             tx_events,
             render_context,
         });
@@ -227,7 +237,7 @@ pub(super) struct RenderContext {
 }
 
 impl RenderContext {
-    async fn webgpu_shared(config: &SceneRendererConfig) -> Result<Self, Error> {
+    async fn webgpu_shared(config: &RendererConfig) -> Result<Self, Error> {
         tracing::debug!("creating WEBGPU instance");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
@@ -238,7 +248,7 @@ impl RenderContext {
 
     async fn new(
         instance: Arc<wgpu::Instance>,
-        config: &SceneRendererConfig,
+        config: &RendererConfig,
         compatible_surface: Option<&wgpu::Surface<'static>>,
     ) -> Result<Self, Error> {
         tracing::debug!("creating render adapter");
@@ -284,17 +294,14 @@ impl RenderContext {
 }
 
 struct RenderLoop {
-    config: Arc<SceneRendererConfig>,
-    scene_renderer: SceneRenderer,
+    config: Arc<RendererConfig>,
+    renderer: Renderer,
     shared_context: Option<Arc<RenderContext>>,
     windows: HashMap<WindowId, WindowState>,
 }
 
 impl RenderLoop {
-    async fn new(
-        scene_renderer: SceneRenderer,
-        config: Arc<SceneRendererConfig>,
-    ) -> Result<Self, Error> {
+    async fn new(renderer: Renderer, config: Arc<RendererConfig>) -> Result<Self, Error> {
         let shared_context = match config.backend_type {
             BackendType::WebGpu => {
                 // WebGPU (and really all backends except webgl can reuse the context)
@@ -308,7 +315,7 @@ impl RenderLoop {
 
         Ok(Self {
             config,
-            scene_renderer,
+            renderer,
             shared_context,
             windows: Default::default(),
         })
@@ -369,13 +376,13 @@ impl ApplicationHandler<Command> for RenderLoop {
                     }
                 }
                 winit::event::WindowEvent::RedrawRequested => {
-                    if let Some(scene_view) = &window.scene_view {
+                    if let Some(scene) = &window.scene {
                         let texture = window
                             .surface
                             .get_current_texture()
                             .expect("get_current_texture failed");
                         render_scene(
-                            scene_view,
+                            scene,
                             &texture.texture,
                             &window.render_context.device,
                             &window.render_context.queue,
@@ -404,7 +411,7 @@ impl ApplicationHandler<Command> for RenderLoop {
                 window,
                 surface,
                 initial_size,
-                scene_view,
+                scene,
                 tx_events,
                 render_context,
             } => {
@@ -419,7 +426,7 @@ impl ApplicationHandler<Command> for RenderLoop {
                         window,
                         surface,
                         initial_size,
-                        scene_view,
+                        scene,
                         tx_events,
                         render_context,
                     ),
@@ -430,12 +437,9 @@ impl ApplicationHandler<Command> for RenderLoop {
                     // we think we can just drop everything
                 }
             }
-            Command::SetSceneView {
-                window_id,
-                scene_view,
-            } => {
+            Command::SetScene { window_id, scene } => {
                 if let Some(window) = self.windows.get_mut(&window_id) {
-                    window.scene_view = scene_view;
+                    window.scene = scene;
                 }
             }
             Command::CreateTexture {
@@ -458,7 +462,7 @@ struct WindowState {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    scene_view: Option<SceneView>,
+    scene: Option<Scene>,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     render_buffer: RenderBuffer,
@@ -471,7 +475,7 @@ impl WindowState {
         window: Arc<Window>,
         surface: wgpu::Surface<'static>,
         initial_size: PhysicalSize<u32>,
-        scene_view: Option<SceneView>,
+        scene: Option<Scene>,
         tx_events: mpsc::Sender<window::Event>,
         render_context: Arc<RenderContext>,
     ) -> Self {
@@ -635,7 +639,7 @@ impl WindowState {
             window,
             surface,
             config,
-            scene_view,
+            scene,
             pipeline,
             bind_group_layout,
             render_buffer,
@@ -675,8 +679,8 @@ impl WindowState {
 }
 
 #[derive(Clone)]
-pub struct SceneView {
-    pub scene: Scene,
+pub struct Scene {
+    pub world: Arc<RwLock<World>>,
     pub camera: Entity,
 }
 
@@ -715,7 +719,7 @@ impl Vertex {
 }
 
 fn render_scene(
-    scene_view: &SceneView,
+    scene: &Scene,
     target_texture: &wgpu::Texture,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -728,11 +732,11 @@ fn render_scene(
         label: Some("scene render encoder"),
     });
 
-    let mut world = scene_view.scene.world.lock().unwrap();
+    let mut world = scene.world.write().unwrap();
 
     let (camera_transform, clear_color) = {
         let (transform, camera) = world
-            .query_one_mut::<(&Transform, &Camera)>(scene_view.camera)
+            .query_one_mut::<(&Transform, &Camera)>(scene.camera)
             .unwrap();
         (
             camera.projection * transform.transform.inverse(),

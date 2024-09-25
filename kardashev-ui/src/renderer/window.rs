@@ -16,9 +16,7 @@ use std::{
 use futures::Stream;
 use tokio::sync::mpsc;
 
-use super::renderer::SceneRenderer;
-
-pub mod leptos;
+use super::Renderer;
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -26,15 +24,15 @@ pub enum Event {
 }
 
 pub struct Window {
-    scene_renderer: SceneRenderer,
+    renderer: Renderer,
     window: Arc<winit::window::Window>,
     reference_count: Arc<AtomicUsize>,
 }
 
 impl Window {
-    pub(super) fn new(scene_renderer: SceneRenderer, window: Arc<winit::window::Window>) -> Self {
+    pub(super) fn new(renderer: Renderer, window: Arc<winit::window::Window>) -> Self {
         Self {
-            scene_renderer,
+            renderer,
             window,
             reference_count: Arc::new(AtomicUsize::new(1)),
         }
@@ -45,7 +43,7 @@ impl Clone for Window {
     fn clone(&self) -> Self {
         self.reference_count.fetch_add(1, Ordering::Relaxed);
         Self {
-            scene_renderer: self.scene_renderer.clone(),
+            renderer: self.renderer.clone(),
             window: self.window.clone(),
             reference_count: self.reference_count.clone(),
         }
@@ -55,7 +53,7 @@ impl Clone for Window {
 impl Drop for Window {
     fn drop(&mut self) {
         if self.reference_count.fetch_sub(1, Ordering::Relaxed) <= 1 {
-            self.scene_renderer.destroy_window(self.window.id());
+            self.renderer.destroy_window(self.window.id());
         }
     }
 }

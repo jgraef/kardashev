@@ -21,14 +21,11 @@ use leptos_use::{
 use web_sys::ResizeObserverBoxOptions;
 
 use crate::{
-    app::{
-        expect_context,
-        Context,
-    },
-    scene::renderer::SceneView,
+    app::Context,
+    renderer::Scene,
 };
 
-stylance::import_crate_style!(style, "src/scene/window/window.module.scss");
+stylance::import_crate_style!(style, "src/app/components/window.module.scss");
 
 /// A window (i.e. a HTML canvas) to which a scene is rendered.
 /// This creates a container (div) that can be sized using CSS. The canvas will
@@ -39,8 +36,8 @@ stylance::import_crate_style!(style, "src/scene/window/window.module.scss");
 /// - Make sure the window is destroyed when the component is disposed.
 /// - Add event handler property
 #[component]
-pub fn Window(#[prop(optional)] scene_view: Option<SceneView>) -> impl IntoView {
-    let Context { scene_renderer, .. } = expect_context();
+pub fn Window(#[prop(optional)] scene: Option<Scene>) -> impl IntoView {
+    let Context { renderer, .. } = Context::get();
 
     let container_node_ref = create_node_ref::<Div>();
     let canvas_node_ref = create_node_ref::<Canvas>();
@@ -48,9 +45,7 @@ pub fn Window(#[prop(optional)] scene_view: Option<SceneView>) -> impl IntoView 
 
     canvas_node_ref.on_load(move |canvas| {
         spawn_local(async move {
-            let (window, mut events) = scene_renderer
-                .create_window(canvas.deref().clone(), scene_view)
-                .await;
+            let (window, mut events) = renderer.create_window(canvas.deref().clone(), scene).await;
 
             window_handle.set_value(Some(window));
 

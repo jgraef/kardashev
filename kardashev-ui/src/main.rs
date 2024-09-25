@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 pub mod app;
-pub mod components;
 pub mod error;
-pub mod scene;
+pub mod renderer;
 pub mod utils;
 
 use wasm_bindgen::JsCast;

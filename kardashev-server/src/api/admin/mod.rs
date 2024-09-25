@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub fn router() -> Router<Context> {
-    Router::new().route("/stars", routing::post(create_stars))
+    Router::new().route("/star", routing::post(create_stars))
 }
 
 async fn create_stars(
@@ -75,6 +75,8 @@ async fn create_stars(
         .await?;
         star_ids.push(StarId(row.id));
     }
+
+    tx.commit().await?;
 
     Ok(Json(CreateStarsResponse { ids: star_ids }))
 }
