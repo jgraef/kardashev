@@ -69,7 +69,7 @@ impl Service<Request<Body>> for ServeFiles {
 pub fn serve_ui() -> Result<ServeFiles, Error> {
     let path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("kardashev-frontend")
+        .join("kardashev-ui")
         .join("dist")
         .canonicalize()
         .expect("Could not get absolute path for UI");

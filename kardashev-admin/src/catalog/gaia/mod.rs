@@ -14,7 +14,10 @@ use std::{
 };
 
 use async_compression::tokio::bufread::GzipDecoder;
-use color_eyre::eyre::bail;
+use color_eyre::eyre::{
+    bail,
+    Error,
+};
 use csv_async::{
     AsyncReaderBuilder,
     DeserializeRecordsIntoStream,
@@ -34,7 +37,6 @@ pub use self::model::{
     astro::AstrophysicalParameters,
     source::GaiaSource,
 };
-use crate::Error;
 
 lazy_static! {
     static ref FILE_NAME_REGEX: Regex = r"^(\w+)_(\d+)-(\d+).csv.gz$".parse().unwrap();

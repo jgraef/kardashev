@@ -1,6 +1,16 @@
-use std::net::SocketAddr;
+use std::{
+    net::SocketAddr,
+    ops::{
+        Deref,
+        DerefMut,
+    },
+};
 
 use axum::Router;
+use chrono::{
+    DateTime,
+    Utc,
+};
 use sqlx::{
     PgPool,
     Postgres,
@@ -30,10 +40,13 @@ impl Server {
         let serve_assets = serve_assets()?;
 
         let router = Router::new()
-            .nest("api", api::router())
-            .nest_service("assets", serve_assets)
+            .nest("/api", api::router())
+            .nest_service("/assets", serve_assets)
             .fallback_service(serve_ui)
-            .with_state(Context { db });
+            .with_state(Context {
+                db,
+                up_since: Utc::now(),
+            });
 
         let shutdown = CancellationToken::new();
 
@@ -57,6 +70,7 @@ impl Server {
 #[derive(Clone)]
 pub struct Context {
     db: PgPool,
+    pub up_since: DateTime<Utc>,
 }
 
 impl Context {
@@ -69,6 +83,20 @@ impl Context {
 
 pub struct Transaction<'a> {
     transaction: sqlx::Transaction<'a, Postgres>,
+}
+
+impl<'a> Deref for Transaction<'a> {
+    type Target = sqlx::Transaction<'a, Postgres>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transaction
+    }
+}
+
+impl<'a> DerefMut for Transaction<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.transaction
+    }
 }
 
 impl<'a> Transaction<'a> {

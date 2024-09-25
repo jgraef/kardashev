@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "kardashev-admin",
     "kardashev-client",
     "kardashev-lab",
     "kardashev-protocol",
-    "kardashev-seed",
     "kardashev-server",
     "kardashev-ui",
 ]
