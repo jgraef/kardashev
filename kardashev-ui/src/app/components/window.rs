@@ -1,6 +1,5 @@
 use std::ops::Deref;
 
-use futures::StreamExt;
 use leptos::{
     component,
     create_node_ref,
@@ -22,7 +21,10 @@ use web_sys::ResizeObserverBoxOptions;
 
 use crate::{
     app::Context,
-    renderer::Scene,
+    graphics::{
+        renderer::RenderPlugin,
+        window::WindowHandler,
+    },
 };
 
 stylance::import_crate_style!(style, "src/app/components/window.module.scss");
@@ -36,7 +38,7 @@ stylance::import_crate_style!(style, "src/app/components/window.module.scss");
 /// - Make sure the window is destroyed when the component is disposed.
 /// - Add event handler property
 #[component]
-pub fn Window(#[prop(optional)] scene: Option<Scene>) -> impl IntoView {
+pub fn Window(handler: impl WindowHandler, render_plugin: impl RenderPlugin) -> impl IntoView {
     let Context { renderer, .. } = Context::get();
 
     let container_node_ref = create_node_ref::<Div>();
@@ -45,15 +47,14 @@ pub fn Window(#[prop(optional)] scene: Option<Scene>) -> impl IntoView {
 
     canvas_node_ref.on_load(move |canvas| {
         spawn_local(async move {
-            let (window, mut events) = renderer.create_window(canvas.deref().clone(), scene).await;
-
+            let window = renderer
+                .create_window(
+                    canvas.deref().clone(),
+                    Box::new(handler),
+                    Box::new(render_plugin),
+                )
+                .await;
             window_handle.set_value(Some(window));
-
-            while let Some(event) = events.next().await {
-                match event {
-                    // todo
-                }
-            }
         })
     });
 

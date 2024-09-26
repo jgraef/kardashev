@@ -2,7 +2,7 @@
 
 pub mod app;
 pub mod error;
-pub mod renderer;
+pub mod graphics;
 pub mod utils;
 
 use wasm_bindgen::JsCast;

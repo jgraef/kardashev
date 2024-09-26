@@ -25,7 +25,7 @@ use url::Url;
 use self::map::Map;
 use crate::{
     app::components::dock::Dock,
-    renderer::Renderer,
+    graphics::Graphics,
 };
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
@@ -43,7 +43,7 @@ fn get_api_url() -> Url {
 #[derive(Clone)]
 pub struct Context {
     pub client: Client,
-    pub renderer: Renderer,
+    pub renderer: Graphics,
     pub world: Arc<RwLock<World>>,
 }
 
@@ -52,7 +52,7 @@ impl Context {
         let client = Client::new(get_api_url());
 
         tracing::debug!("creating renderer");
-        let renderer = Renderer::new(Default::default());
+        let renderer = Graphics::new(Default::default());
 
         tracing::debug!("creating world");
         let world = World::new();

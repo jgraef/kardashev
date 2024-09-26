@@ -1,36 +1,23 @@
-use std::{
-    pin::Pin,
-    sync::{
-        atomic::{
-            AtomicUsize,
-            Ordering,
-        },
-        Arc,
+use std::sync::{
+    atomic::{
+        AtomicUsize,
+        Ordering,
     },
-    task::{
-        Context,
-        Poll,
-    },
+    Arc,
 };
 
-use futures::Stream;
-use tokio::sync::mpsc;
+use winit::dpi::PhysicalSize;
 
-use super::Renderer;
-
-#[derive(Clone, Debug)]
-pub enum Event {
-    // todo
-}
+use super::Graphics;
 
 pub struct Window {
-    renderer: Renderer,
+    renderer: Graphics,
     window: Arc<winit::window::Window>,
     reference_count: Arc<AtomicUsize>,
 }
 
 impl Window {
-    pub(super) fn new(renderer: Renderer, window: Arc<winit::window::Window>) -> Self {
+    pub(super) fn new(renderer: Graphics, window: Arc<winit::window::Window>) -> Self {
         Self {
             renderer,
             window,
@@ -58,20 +45,12 @@ impl Drop for Window {
     }
 }
 
-pub struct Events {
-    rx: mpsc::Receiver<Event>,
+pub trait WindowHandler: 'static {
+    fn on_resize(&mut self, new_size: PhysicalSize<u32>);
 }
 
-impl Events {
-    pub(super) fn new(rx: mpsc::Receiver<Event>) -> Self {
-        Self { rx }
-    }
-}
+pub struct NullEventHandler;
 
-impl Stream for Events {
-    type Item = Event;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx)
-    }
+impl WindowHandler for NullEventHandler {
+    fn on_resize(&mut self, _new_size: PhysicalSize<u32>) {}
 }
