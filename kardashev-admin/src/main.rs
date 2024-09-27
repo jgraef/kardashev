@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::Error;
-use kardashev_client::Client;
+use kardashev_client::ApiClient;
 use url::Url;
 use utils::format_uptime;
 
@@ -39,7 +39,7 @@ pub enum Command {
 
 impl Args {
     async fn run(self) -> Result<(), Error> {
-        let api = Client::new(self.api_url);
+        let api = ApiClient::new(self.api_url);
 
         let status = api.status().await?;
         println!("Server version: {}", status.server_version);

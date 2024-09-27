@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytemuck::{
     Pod,
     Zeroable,
@@ -10,6 +12,7 @@ use palette::{
     Srgba,
     WithAlpha,
 };
+use parking_lot::RwLock;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
@@ -186,7 +189,7 @@ impl RenderPlugin for Render3dPlugin {
                 cache: None,
             });
 
-        const VERTICES: &[Vertex] = &[
+        /*const VERTICES: &[Vertex] = &[
             Vertex {
                 position: [-0.0868241, 0.49240386, 0.0],
                 tex_coords: [0.4131759, 0.99240386],
@@ -223,7 +226,7 @@ impl RenderPlugin for Render3dPlugin {
                 label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(INDICES),
                 usage: wgpu::BufferUsages::INDEX,
-            });
+            });*/
 
         Box::new(Render3d {
             pipeline,
@@ -232,6 +235,7 @@ impl RenderPlugin for Render3dPlugin {
             camera_bind_group,
             camera_entity: None,
             depth_texture,
+            world: Arc::new(RwLock::new(World::new())), // we'll have that here for now
         })
     }
 }
@@ -243,6 +247,7 @@ pub struct Render3d {
     camera_bind_group: wgpu::BindGroup,
     camera_entity: Option<Entity>,
     depth_texture: DepthTexture,
+    world: Arc<RwLock<World>>,
 }
 
 impl Renderer for Render3d {
@@ -262,8 +267,7 @@ impl Renderer for Render3d {
                 label: Some("render encoder"),
             });
 
-        //let mut world = self.world.write().unwrap();
-        let mut world = World::new(); // todo
+        let mut world = self.world.write();
 
         let mut clear_color: Option<Srgba> =
             Some(palette::named::BLACK.with_alpha(1.0).into_format());
@@ -323,10 +327,13 @@ impl Renderer for Render3d {
                 for (_entity, (transform, mesh, material)) in
                     world.query_mut::<(&Transform, &Mesh, &Material)>()
                 {
+                    let _ = (transform, material); // todo
+
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                    render_pass.set_bind_group(0, &material.bind_group, &[]);
+                    //render_pass.set_bind_group(0, &material.bind_group, &[]);
+                    // todo
                     render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
                     render_pass.draw_indexed(0..mesh.num_indices as u32, 0, 0..1);
                 }

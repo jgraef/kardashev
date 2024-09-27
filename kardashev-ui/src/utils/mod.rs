@@ -1,5 +1,3 @@
-pub mod image_load;
-
 use futures::{
     Future,
     FutureExt,

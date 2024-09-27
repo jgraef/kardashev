@@ -6,23 +6,45 @@ use std::sync::{
     Arc,
 };
 
+use image::RgbaImage;
+use tokio::sync::oneshot;
 use winit::dpi::PhysicalSize;
 
-use super::Graphics;
+use super::{
+    texture::Texture,
+    Command,
+    Error,
+    Graphics,
+};
 
 pub struct Window {
-    renderer: Graphics,
+    graphics: Graphics,
     window: Arc<winit::window::Window>,
     reference_count: Arc<AtomicUsize>,
 }
 
 impl Window {
-    pub(super) fn new(renderer: Graphics, window: Arc<winit::window::Window>) -> Self {
+    pub(super) fn new(graphics: Graphics, window: Arc<winit::window::Window>) -> Self {
         Self {
-            renderer,
+            graphics,
             window,
             reference_count: Arc::new(AtomicUsize::new(1)),
         }
+    }
+
+    pub async fn load_texture(
+        &self,
+        image: RgbaImage,
+        label: Option<String>,
+    ) -> Result<Texture, Error> {
+        let (tx_response, rx_response) = oneshot::channel();
+        self.graphics.send_command(Command::LoadTexture {
+            window_id: self.window.id(),
+            image,
+            label,
+            tx_response,
+        });
+        rx_response.await.expect("tx_response dropped")
     }
 }
 
@@ -30,7 +52,7 @@ impl Clone for Window {
     fn clone(&self) -> Self {
         self.reference_count.fetch_add(1, Ordering::Relaxed);
         Self {
-            renderer: self.renderer.clone(),
+            graphics: self.graphics.clone(),
             window: self.window.clone(),
             reference_count: self.reference_count.clone(),
         }
@@ -40,7 +62,7 @@ impl Clone for Window {
 impl Drop for Window {
     fn drop(&mut self) {
         if self.reference_count.fetch_sub(1, Ordering::Relaxed) <= 1 {
-            self.renderer.destroy_window(self.window.id());
+            self.graphics.destroy_window(self.window.id());
         }
     }
 }

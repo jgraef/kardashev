@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "kardashev-admin",
+    "kardashev-assets",
     "kardashev-client",
     "kardashev-lab",
     "kardashev-protocol",

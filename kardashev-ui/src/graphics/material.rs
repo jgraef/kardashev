@@ -1,18 +1,43 @@
+use std::sync::Arc;
+
 use image::RgbaImage;
+use kardashev_protocol::assets::AssetId;
+use linear_map::LinearMap;
 use wgpu::util::DeviceExt;
+
+use super::BackendId;
+
+#[derive(Debug)]
+pub struct Material {
+    asset_id: AssetId,
+    //data: Option<Arc<RwLock<MaterialData>>>,
+}
+
+struct MaterialData {}
+
+#[derive(Clone, Debug)]
+struct LoadedMaterial {
+    ambient: Option<LoadedTexture>,
+    diffuse: Option<LoadedTexture>,
+    specular: Option<LoadedTexture>,
+    normal: Option<LoadedTexture>,
+    shininess: Option<LoadedTexture>,
+    dissolve: Option<LoadedTexture>,
+    bind_group: Arc<wgpu::BindGroup>,
+}
+
+#[derive(Clone, Debug)]
+struct LoadedTexture {
+    texture: Arc<wgpu::Texture>,
+    view: Arc<wgpu::TextureView>,
+    sampler: Arc<wgpu::Sampler>,
+}
 
 #[derive(Debug)]
 pub struct LoaderContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub material_bind_group_layout: &'a wgpu::BindGroupLayout,
-}
-
-#[derive(Debug)]
-pub struct Material {
-    pub diffuse_texture_view: wgpu::TextureView,
-    pub diffuse_sampler: wgpu::Sampler,
-    pub bind_group: wgpu::BindGroup,
 }
 
 impl Material {
@@ -53,7 +78,7 @@ impl Material {
             ..Default::default()
         });
 
-        let bind_group = context
+        let _bind_group = context
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &context.material_bind_group_layout,
@@ -70,10 +95,6 @@ impl Material {
                 label: Some("diffuse_bind_group"),
             });
 
-        Self {
-            diffuse_texture_view,
-            diffuse_sampler,
-            bind_group,
-        }
+        todo!();
     }
 }

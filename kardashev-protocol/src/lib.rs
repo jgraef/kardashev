@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod assets;
 pub mod model;
 
 use chrono::{

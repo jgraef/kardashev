@@ -5,7 +5,7 @@ use indicatif::{
     ProgressStyle,
 };
 use itertools::Itertools;
-use kardashev_client::Client;
+use kardashev_client::ApiClient;
 use kardashev_protocol::{
     admin::CreateStar,
     model::star::CatalogIds,
@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub async fn import_stars(
-    api: &Client,
+    api: &ApiClient,
     path: impl AsRef<Path>,
     batch_size: usize,
     num_closest: Option<usize>,

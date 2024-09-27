@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use hecs::World;
-use kardashev_client::Client;
+use kardashev_client::ApiClient;
 use leptos::{
     component,
     view,
@@ -30,26 +30,36 @@ use crate::{
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
 
-fn get_api_url() -> Url {
-    fn get_url() -> Option<Url> {
-        gloo_utils::document().base_uri().ok()??.parse().ok()
+struct Urls {
+    api_url: Url,
+    asset_url: Url,
+}
+
+impl Default for Urls {
+    fn default() -> Self {
+        fn get_base_url() -> Option<Url> {
+            gloo_utils::document().base_uri().ok()??.parse().ok()
+        }
+        let base_url: Url = get_base_url().expect("could not determine base URL");
+        let api_url = base_url.join("api").unwrap();
+        let asset_url = base_url.join("assets").unwrap();
+        tracing::debug!(%api_url, %asset_url);
+        Urls { api_url, asset_url }
     }
-    let url: Url = get_url().expect("could not determine API URL");
-    //let url: Url = "http://localhost:3333/".parse().unwrap();
-    tracing::debug!(url = %url);
-    url
 }
 
 #[derive(Clone)]
 pub struct Context {
-    pub client: Client,
+    pub api_client: ApiClient,
     pub renderer: Graphics,
     pub world: Arc<RwLock<World>>,
 }
 
 impl Context {
     fn provide() -> Self {
-        let client = Client::new(get_api_url());
+        let urls = Urls::default();
+
+        let api_client = ApiClient::new(urls.api_url);
 
         tracing::debug!("creating renderer");
         let renderer = Graphics::new(Default::default());
@@ -58,7 +68,7 @@ impl Context {
         let world = World::new();
 
         let context = Self {
-            client,
+            api_client,
             renderer,
             world: Arc::new(RwLock::new(world)),
         };

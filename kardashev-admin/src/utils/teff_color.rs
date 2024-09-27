@@ -12,7 +12,7 @@ lazy_static! {
         TeffColorTable::load_table(include_str!("teff-rgb.csv"));
 }
 
-pub struct TeffColorTable {
+struct TeffColorTable {
     data: BTreeMap<u32, LinSrgb>,
 }
 
@@ -37,7 +37,7 @@ impl TeffColorTable {
         Self { data }
     }
 
-    pub fn get(&self, t_eff: f32) -> LinSrgb {
+    fn get(&self, t_eff: f32) -> LinSrgb {
         let t_eff_int = t_eff as u32;
 
         let cursor = self.data.lower_bound(Bound::Included(&t_eff_int));

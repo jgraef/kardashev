@@ -9,7 +9,13 @@ pub mod window;
 
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+        Arc,
+    },
 };
 
 use image::RgbaImage;
@@ -22,7 +28,10 @@ use renderer::{
 };
 use tokio::sync::oneshot;
 use web_sys::HtmlCanvasElement;
-use wgpu::util::DeviceExt;
+use wgpu::{
+    util::DeviceExt,
+    TextureViewDescriptor,
+};
 use window::WindowHandler;
 use winit::{
     application::ApplicationHandler,
@@ -74,9 +83,10 @@ enum Command {
     DestroyWindow {
         window_id: WindowId,
     },
-    CreateTexture {
+    LoadTexture {
         window_id: WindowId,
         image: RgbaImage,
+        label: Option<String>,
         tx_response: oneshot::Sender<Result<Texture, Error>>,
     },
 }
@@ -185,22 +195,8 @@ impl Graphics {
         window
     }
 
-    pub(super) fn destroy_window(&self, window_id: WindowId) {
+    pub fn destroy_window(&self, window_id: WindowId) {
         self.send_command(Command::DestroyWindow { window_id });
-    }
-
-    pub(super) async fn create_texture(
-        &self,
-        window_id: WindowId,
-        image: RgbaImage,
-    ) -> Result<Texture, Error> {
-        let (tx_response, rx_response) = oneshot::channel();
-        self.send_command(Command::CreateTexture {
-            window_id,
-            image,
-            tx_response,
-        });
-        rx_response.await.expect("tx_response dropped")
     }
 }
 
@@ -211,8 +207,12 @@ pub enum BackendType {
     WebGl,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BackendId(usize);
+
 #[derive(Debug)]
 pub(super) struct Backend {
+    id: BackendId,
     instance: Arc<wgpu::Instance>,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
@@ -260,7 +260,11 @@ impl Backend {
             tracing::error!(%error, "uncaptured error");
         }));
 
+        static IDS: AtomicUsize = AtomicUsize::new(1);
+        let id = BackendId(IDS.fetch_add(1, Ordering::Relaxed));
+
         Ok(Self {
+            id,
             instance,
             adapter,
             device,
@@ -272,13 +276,13 @@ impl Backend {
 struct MainLoop {
     config: Arc<RendererConfig>,
     renderer: Graphics,
-    shared_context: Option<Arc<Backend>>,
+    shared_backend: Option<Arc<Backend>>,
     windows: HashMap<WindowId, WindowState>,
 }
 
 impl MainLoop {
     async fn new(renderer: Graphics, config: Arc<RendererConfig>) -> Result<Self, Error> {
-        let shared_context = match config.backend_type {
+        let shared_backend = match config.backend_type {
             BackendType::WebGpu => {
                 // WebGPU (and really all backends except webgl can reuse the context)
                 Some(Arc::new(Backend::webgpu_shared(&config).await?))
@@ -292,7 +296,7 @@ impl MainLoop {
         Ok(Self {
             config,
             renderer,
-            shared_context,
+            shared_backend,
             windows: Default::default(),
         })
     }
@@ -390,7 +394,7 @@ impl ApplicationHandler<Command> for MainLoop {
             } => {
                 let backend = backend
                     .map(Arc::new)
-                    .or_else(|| self.shared_context.clone())
+                    .or_else(|| self.shared_backend.clone())
                     .expect("missing render context");
 
                 self.windows.insert(
@@ -410,15 +414,16 @@ impl ApplicationHandler<Command> for MainLoop {
                     // we think we can just drop everything
                 }
             }
-            Command::CreateTexture {
+            Command::LoadTexture {
                 window_id,
                 image,
+                label,
                 tx_response,
             } => {
                 let texture = self
                     .windows
                     .get(&window_id)
-                    .map(|window| window.create_texture(image))
+                    .map(|window| window.load_texture(image, label.as_deref()))
                     .ok_or_else(|| Error::NoSuchWindow(window_id));
                 let _ = tx_response.send(texture);
             }
@@ -488,7 +493,7 @@ impl WindowState {
         }
     }
 
-    fn create_texture(&self, image: RgbaImage) -> Texture {
+    fn load_texture(&self, image: RgbaImage, label: Option<&str>) -> Texture {
         let image_size = image.dimensions();
         let texture_size = wgpu::Extent3d {
             width: image_size.0,
@@ -496,24 +501,44 @@ impl WindowState {
             depth_or_array_layers: 1,
         };
 
-        let inner = self.backend.device.create_texture_with_data(
+        let texture = self.backend.device.create_texture_with_data(
             &self.backend.queue,
             &wgpu::TextureDescriptor {
+                label,
                 size: texture_size,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                label: None,
                 view_formats: &[],
             },
             wgpu::util::TextureDataOrder::default(),
             image.as_raw(),
         );
 
+        let view = texture.create_view(&TextureViewDescriptor {
+            label,
+            ..Default::default()
+        });
+        let sampler = self
+            .backend
+            .device
+            .create_sampler(&wgpu::SamplerDescriptor {
+                label,
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+
         Texture {
-            inner: Arc::new(inner),
+            texture: Arc::new(texture),
+            view: Arc::new(view),
+            sampler: Arc::new(sampler),
         }
     }
 }
