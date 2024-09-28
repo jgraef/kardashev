@@ -5,6 +5,7 @@ pub mod assets;
 pub mod error;
 pub mod graphics;
 pub mod utils;
+pub mod world;
 
 use wasm_bindgen::JsCast;
 

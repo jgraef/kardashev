@@ -1,2 +1,5 @@
 #[derive(Debug, thiserror::Error)]
-pub enum Error {}
+#[error("app error")]
+pub enum Error {
+    Graphics(#[from] crate::graphics::Error),
+}

@@ -21,10 +21,14 @@ use web_sys::ResizeObserverBoxOptions;
 
 use crate::{
     app::Context,
+    error::Error,
     graphics::{
-        renderer::RenderPlugin,
-        window::WindowHandler,
+        rendering_system::RenderTarget,
+        SurfaceSize,
+        WindowHandle,
     },
+    utils::spawn_local_and_handle_error,
+    world::World,
 };
 
 stylance::import_crate_style!(style, "src/app/components/window.module.scss");
@@ -35,26 +39,23 @@ stylance::import_crate_style!(style, "src/app/components/window.module.scss");
 ///
 /// # TODO
 ///
-/// - Make sure the window is destroyed when the component is disposed.
 /// - Add event handler property
 #[component]
-pub fn Window(handler: impl WindowHandler, render_plugin: impl RenderPlugin) -> impl IntoView {
-    let Context { renderer, .. } = Context::get();
+pub fn Window(on_load: impl FnOnce(RenderTarget) + 'static) -> impl IntoView {
+    let Context { graphics, .. } = Context::get();
 
     let container_node_ref = create_node_ref::<Div>();
     let canvas_node_ref = create_node_ref::<Canvas>();
-    let window_handle = StoredValue::new(None);
+
+    let window_handle = WindowHandle::new();
 
     canvas_node_ref.on_load(move |canvas| {
-        spawn_local(async move {
-            let window = renderer
-                .create_window(
-                    canvas.deref().clone(),
-                    Box::new(handler),
-                    Box::new(render_plugin),
-                )
-                .await;
-            window_handle.set_value(Some(window));
+        let surface_size = SurfaceSize::from_html_canvas(&canvas);
+        spawn_local_and_handle_error(async move {
+            let surface = graphics.create_surface(window_handle, surface_size).await?;
+            let render_target = RenderTarget::from_surface(&surface);
+            on_load(render_target);
+            Ok::<(), Error>(())
         })
     });
 
@@ -74,6 +75,7 @@ pub fn Window(handler: impl WindowHandler, render_plugin: impl RenderPlugin) -> 
                 node_ref=canvas_node_ref
                 width=width
                 height=height
+                data-raw-handle=window_handle
             ></canvas>
         </div>
     }

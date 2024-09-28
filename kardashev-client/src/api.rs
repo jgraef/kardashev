@@ -20,7 +20,7 @@ use crate::{
     UrlExt,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ApiClient {
     client: reqwest::Client,
     api_url: Arc<Url>,

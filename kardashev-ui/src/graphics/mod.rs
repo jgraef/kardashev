@@ -1,17 +1,19 @@
 pub mod camera;
-pub mod event_loop;
 pub mod material;
 pub mod mesh;
 pub mod model;
-pub mod renderer;
+pub mod rendering_system;
 pub mod texture;
 pub mod transform;
-pub mod window;
 
 use std::{
-    collections::HashMap,
+    num::{
+        NonZeroU32,
+        NonZeroUsize,
+    },
     sync::{
         atomic::{
+            AtomicU32,
             AtomicUsize,
             Ordering,
         },
@@ -19,37 +21,12 @@ use std::{
     },
 };
 
-use image::RgbaImage;
-use renderer::{
-    CreateRendererContext,
-    RenderContext,
-    RenderPlugin,
-    Renderer,
-    ResizeContext,
+use tokio::sync::{
+    mpsc,
+    oneshot,
 };
-use tokio::sync::oneshot;
 use web_sys::HtmlCanvasElement;
-use wgpu::{
-    util::DeviceExt,
-    TextureViewDescriptor,
-};
-use window::WindowHandler;
-use winit::{
-    application::ApplicationHandler,
-    dpi::PhysicalSize,
-    event_loop::{
-        ActiveEventLoop,
-        EventLoop,
-        EventLoopProxy,
-    },
-    window::{
-        Window,
-        WindowAttributes,
-        WindowId,
-    },
-};
 
-use self::texture::Texture;
 use crate::utils::spawn_local_and_handle_error;
 
 #[derive(Debug, thiserror::Error)]
@@ -62,142 +39,63 @@ pub enum Error {
 
     #[error("failed to request device")]
     RequestDevice(#[from] wgpu::RequestDeviceError),
-
-    #[error("no such window: {0:?}")]
-    NoSuchWindow(WindowId),
-}
-
-enum Command {
-    CreateWindow {
-        canvas: HtmlCanvasElement,
-        instance: Arc<wgpu::Instance>,
-        tx_response: oneshot::Sender<CreateWindowResponse>,
-    },
-    InitializeWindow {
-        window: Arc<Window>,
-        surface: wgpu::Surface<'static>,
-        initial_size: PhysicalSize<u32>,
-        render_context: Option<Backend>,
-        window_handler: Box<dyn WindowHandler>,
-        render_plugin: Box<dyn RenderPlugin>,
-    },
-    DestroyWindow {
-        window_id: WindowId,
-    },
-    LoadTexture {
-        window_id: WindowId,
-        image: RgbaImage,
-        label: Option<String>,
-        tx_response: oneshot::Sender<Result<Texture, Error>>,
-    },
-}
-
-struct CreateWindowResponse {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RendererConfig {
+pub struct Config {
     pub power_preference: wgpu::PowerPreference,
     pub backend_type: BackendType,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Graphics {
-    config: Arc<RendererConfig>,
-    proxy: EventLoopProxy<Command>,
+    tx_command: mpsc::Sender<Command>,
 }
 
 impl Graphics {
-    pub fn new(config: RendererConfig) -> Self {
-        let config = Arc::new(config);
+    pub fn new(config: Config) -> Self {
+        let (tx_command, rx_command) = mpsc::channel(16);
 
-        let event_loop = EventLoop::with_user_event()
-            .build()
-            .expect("failed to create event loop");
-        let proxy = event_loop.create_proxy();
-
-        let renderer = Self {
-            config: config.clone(),
-            proxy,
-        };
-
-        spawn_local_and_handle_error::<_, Error>({
-            let renderer = renderer.clone();
-            async move {
-                #[allow(unused_mut, unused_variables)]
-                let mut render_loop = MainLoop::new(renderer, config).await?;
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    use winit::platform::web::EventLoopExtWebSys;
-                    tracing::debug!("spawning window event loop");
-                    event_loop.spawn_app(render_loop);
-                }
-
-                Ok(())
-            }
+        spawn_local_and_handle_error(async move {
+            let reactor = Reactor::new(config, rx_command).await?;
+            reactor.run().await
         });
 
-        renderer
+        Self { tx_command }
     }
 
-    fn send_command(&self, command: Command) {
-        let _ = self.proxy.send_event(command);
+    async fn send_command(&self, command: Command) {
+        self.tx_command
+            .send(command)
+            .await
+            .expect("graphics reactor died");
     }
 
-    pub async fn create_window(
+    pub async fn create_surface(
         &self,
-        canvas: HtmlCanvasElement,
-        window_handler: Box<dyn WindowHandler>,
-        render_plugin: Box<dyn RenderPlugin>,
-    ) -> window::Window {
-        let (tx_response, rx_response) = oneshot::channel();
+        window_handle: WindowHandle,
+        surface_size: SurfaceSize,
+    ) -> Result<Surface, Error> {
+        let (tx_result, rx_result) = oneshot::channel();
 
-        tracing::debug!("creating WebGL instance");
-        let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL,
-            ..Default::default()
-        }));
+        self.send_command(Command::CreateSurface {
+            window_handle,
+            surface_size,
+            tx_result,
+        })
+        .await;
 
-        let initial_size = canvas_size(&canvas);
-
-        self.send_command(Command::CreateWindow {
-            canvas,
-            instance: instance.clone(),
-            tx_response,
-        });
-        let CreateWindowResponse { window, surface } =
-            rx_response.await.expect("tx_response dropped");
-
-        let render_context = match self.config.backend_type {
-            BackendType::WebGpu => None,
-            BackendType::WebGl => {
-                Some(
-                    Backend::new(instance, &self.config, Some(&surface))
-                        .await
-                        .expect("todo: handle error"),
-                )
-            }
-        };
-
-        self.send_command(Command::InitializeWindow {
-            window: window.clone(),
+        let CreateSurfaceResponse {
+            backend,
             surface,
-            initial_size,
-            render_context,
-            window_handler,
-            render_plugin,
-        });
+            surface_configuration,
+        } = rx_result.await.unwrap()?;
 
-        let window = window::Window::new(self.clone(), window);
-
-        window
-    }
-
-    pub fn destroy_window(&self, window_id: WindowId) {
-        self.send_command(Command::DestroyWindow { window_id });
+        Ok(Surface {
+            backend,
+            surface: Arc::new(surface),
+            surface_configuration,
+        })
     }
 }
 
@@ -209,19 +107,19 @@ pub enum BackendType {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct BackendId(usize);
+struct BackendId(NonZeroUsize);
 
-#[derive(Debug)]
-pub(super) struct Backend {
+#[derive(Clone, Debug)]
+struct Backend {
     id: BackendId,
     instance: Arc<wgpu::Instance>,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    adapter: Arc<wgpu::Adapter>,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
 }
 
 impl Backend {
-    async fn webgpu_shared(config: &RendererConfig) -> Result<Self, Error> {
+    async fn webgpu_shared(config: &Config) -> Result<Self, Error> {
         tracing::debug!("creating WEBGPU instance");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
@@ -232,7 +130,7 @@ impl Backend {
 
     async fn new(
         instance: Arc<wgpu::Instance>,
-        config: &RendererConfig,
+        config: &Config,
         compatible_surface: Option<&wgpu::Surface<'static>>,
     ) -> Result<Self, Error> {
         tracing::debug!("creating render adapter");
@@ -262,290 +160,221 @@ impl Backend {
         }));
 
         static IDS: AtomicUsize = AtomicUsize::new(1);
-        let id = BackendId(IDS.fetch_add(1, Ordering::Relaxed));
+        let id = BackendId(NonZeroUsize::new(IDS.fetch_add(1, Ordering::Relaxed)).unwrap());
 
         Ok(Self {
             id,
             instance,
-            adapter,
-            device,
-            queue,
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
         })
     }
 }
 
-struct MainLoop {
-    config: Arc<RendererConfig>,
-    renderer: Graphics,
-    shared_backend: Option<Arc<Backend>>,
-    windows: HashMap<WindowId, WindowState>,
+#[derive(Debug)]
+struct Reactor {
+    config: Config,
+    rx_command: mpsc::Receiver<Command>,
+    shared_backend: Option<Backend>,
 }
 
-impl MainLoop {
-    async fn new(renderer: Graphics, config: Arc<RendererConfig>) -> Result<Self, Error> {
+impl Reactor {
+    async fn new(config: Config, rx_command: mpsc::Receiver<Command>) -> Result<Self, Error> {
         let shared_backend = match config.backend_type {
-            BackendType::WebGpu => {
-                // WebGPU (and really all backends except webgl can reuse the context)
-                Some(Arc::new(Backend::webgpu_shared(&config).await?))
-            }
-            BackendType::WebGl => {
-                // for WebGL we have to create a render context for each surface
-                None
-            }
+            BackendType::WebGpu => Some(Backend::webgpu_shared(&config).await?),
+            _ => None,
         };
 
         Ok(Self {
             config,
-            renderer,
+            rx_command,
             shared_backend,
-            windows: Default::default(),
         })
     }
 
-    fn create_window(
-        &self,
-        canvas: HtmlCanvasElement,
-        instance: Arc<wgpu::Instance>,
-        tx_response: oneshot::Sender<CreateWindowResponse>,
-        active_event_loop: &ActiveEventLoop,
-    ) {
-        #[allow(unused_mut)]
-        let mut window_attributes = WindowAttributes::default();
-        #[allow(unused_variables)]
-        let canvas = canvas;
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            use winit::platform::web::WindowAttributesExtWebSys;
-            window_attributes = window_attributes.with_canvas(Some(canvas));
+    async fn run(mut self) -> Result<(), Error> {
+        while let Some(command) = self.rx_command.recv().await {
+            self.handle_command(command).await?;
         }
-        let window = active_event_loop
-            .create_window(window_attributes)
-            .expect("failed to create window");
-        let window = Arc::new(window);
 
-        let surface = instance
-            .create_surface(window.clone())
-            .expect("failed to create surface");
-
-        let _ = tx_response.send(CreateWindowResponse { window, surface });
-    }
-}
-
-impl ApplicationHandler<Command> for MainLoop {
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
-
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: winit::event::WindowEvent,
-    ) {
-        tracing::debug!(?window_id, ?event, "window event");
-
-        if let Some(window) = self.windows.get_mut(&window_id) {
-            match event {
-                winit::event::WindowEvent::Resized(physical_size) => {
-                    tracing::debug!(?physical_size, "window resize");
-                    if physical_size.width > 0 && physical_size.height > 0 {
-                        window.surface_config.width = physical_size.width;
-                        window.surface_config.height = physical_size.height;
-                        window
-                            .surface
-                            .configure(&window.backend.device, &window.surface_config);
-                    }
-                    window.renderer.resize(ResizeContext {
-                        device: &window.backend.device,
-                        new_size: physical_size,
-                    });
-                    window.window_handler.on_resize(physical_size);
-                }
-                winit::event::WindowEvent::RedrawRequested => {
-                    let target_texture = window
-                        .surface
-                        .get_current_texture()
-                        .expect("get_current_texture failed");
-
-                    window.renderer.render(RenderContext {
-                        target_texture,
-                        window: &window.window,
-                        device: &window.backend.device,
-                        queue: &window.backend.queue,
-                    });
-                }
-                _ => {}
-            }
-        }
+        Ok(())
     }
 
-    fn user_event(&mut self, active_event_loop: &ActiveEventLoop, command: Command) {
+    async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
         match command {
-            Command::CreateWindow {
-                canvas,
-                instance,
-                tx_response,
-            } => self.create_window(canvas, instance, tx_response, active_event_loop),
-            Command::InitializeWindow {
-                window,
-                surface,
-                initial_size,
-                render_context: backend,
-                window_handler,
-                render_plugin,
+            Command::CreateSurface {
+                window_handle,
+                surface_size,
+                tx_result,
             } => {
-                let backend = backend
-                    .map(Arc::new)
-                    .or_else(|| self.shared_backend.clone())
-                    .expect("missing render context");
-
-                self.windows.insert(
-                    window.id(),
-                    WindowState::new(
-                        window,
-                        surface,
-                        initial_size,
-                        backend,
-                        window_handler,
-                        render_plugin,
-                    ),
-                );
-            }
-            Command::DestroyWindow { window_id } => {
-                if let Some(_window) = self.windows.remove(&window_id) {
-                    // we think we can just drop everything
-                }
-            }
-            Command::LoadTexture {
-                window_id,
-                image,
-                label,
-                tx_response,
-            } => {
-                let texture = self
-                    .windows
-                    .get(&window_id)
-                    .map(|window| window.load_texture(image, label.as_deref()))
-                    .ok_or_else(|| Error::NoSuchWindow(window_id));
-                let _ = tx_response.send(texture);
+                let result = self.create_surface(window_handle, surface_size).await;
+                let _ = tx_result.send(result);
             }
         }
+
+        Ok(())
     }
-}
 
-struct WindowState {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
-    backend: Arc<Backend>,
-    window_handler: Box<dyn WindowHandler>,
-    renderer: Box<dyn Renderer>,
-}
+    async fn create_surface(
+        &self,
+        window_handle: WindowHandle,
+        surface_size: SurfaceSize,
+    ) -> Result<CreateSurfaceResponse, Error> {
+        let (surface, backend) = if let Some(backend) = &self.shared_backend {
+            let surface = backend
+                .instance
+                .create_surface(window_handle)
+                .expect("failed to create surface");
 
-impl WindowState {
-    fn new(
-        window: Arc<Window>,
-        surface: wgpu::Surface<'static>,
-        initial_size: PhysicalSize<u32>,
-        backend: Arc<Backend>,
-        window_handler: Box<dyn WindowHandler>,
-        render_plugin: Box<dyn RenderPlugin>,
-    ) -> Self {
-        // configure surface
-        let surface_caps = surface.get_capabilities(&backend.adapter);
+            (surface, backend.clone())
+        }
+        else {
+            tracing::debug!("creating WebGL instance");
+            let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            }));
 
-        // Shader code in this tutorial assumes an sRGB surface texture. Using a
-        // different one will result in all the colors
-        // coming out darker. If you want to support non
-        // sRGB surfaces, you'll need to account for that when drawing to the frame.
-        let surface_format = surface_caps
+            let surface = instance
+                .create_surface(window_handle)
+                .expect("failed to create surface");
+
+            let backend = Backend::new(instance, &self.config, Some(&surface))
+                .await
+                .expect("todo: handle error");
+
+            (surface, backend)
+        };
+
+        let surface_capabilities = surface.get_capabilities(&backend.adapter);
+
+        let surface_format = surface_capabilities
             .formats
             .iter()
-            .filter(|f| f.is_srgb())
-            .next()
+            .find(|f| f.is_srgb())
             .copied()
-            .unwrap_or(surface_caps.formats[0]);
+            .unwrap_or(surface_capabilities.formats[0]);
 
-        let surface_config = wgpu::SurfaceConfiguration {
+        let surface_configuration = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: initial_size.width,
-            height: initial_size.height,
-            present_mode: surface_caps.present_modes[0],
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
+            width: surface_size.width,
+            height: surface_size.height,
+            present_mode: surface_capabilities.present_modes[0],
             desired_maximum_frame_latency: 2,
+            alpha_mode: surface_capabilities.alpha_modes[0],
+            view_formats: vec![],
         };
-        surface.configure(&backend.device, &surface_config);
 
-        // create renderer
-        let renderer = render_plugin.create_renderer(CreateRendererContext {
-            surface_config: &surface_config,
-            surface_size: initial_size,
-            device: &backend.device,
-        });
+        surface.configure(&backend.device, &surface_configuration);
 
-        WindowState {
-            window,
-            surface,
-            surface_config,
+        Ok(CreateSurfaceResponse {
             backend,
-            window_handler,
-            renderer,
+            surface,
+            surface_configuration,
+        })
+    }
+}
+
+#[derive(Debug)]
+enum Command {
+    CreateSurface {
+        window_handle: WindowHandle,
+        surface_size: SurfaceSize,
+        tx_result: oneshot::Sender<Result<CreateSurfaceResponse, Error>>,
+    },
+}
+
+#[derive(Debug)]
+struct CreateSurfaceResponse {
+    backend: Backend,
+    surface: wgpu::Surface<'static>,
+    surface_configuration: wgpu::SurfaceConfiguration,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WindowHandle {
+    id: NonZeroU32,
+}
+
+impl WindowHandle {
+    pub fn new() -> Self {
+        static IDS: AtomicU32 = AtomicU32::new(1);
+        Self {
+            id: NonZeroU32::new(IDS.fetch_add(1, Ordering::Relaxed)).unwrap(),
         }
     }
 
-    fn load_texture(&self, image: RgbaImage, label: Option<&str>) -> Texture {
-        let image_size = image.dimensions();
-        let texture_size = wgpu::Extent3d {
-            width: image_size.0,
-            height: image_size.1,
-            depth_or_array_layers: 1,
-        };
+    pub fn id(&self) -> NonZeroU32 {
+        self.id
+    }
+}
 
-        let texture = self.backend.device.create_texture_with_data(
-            &self.backend.queue,
-            &wgpu::TextureDescriptor {
-                label,
-                size: texture_size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::default(),
-            image.as_raw(),
-        );
+impl raw_window_handle::HasWindowHandle for WindowHandle {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'static>, raw_window_handle::HandleError> {
+        let raw = raw_window_handle::RawWindowHandle::Web(raw_window_handle::WebWindowHandle::new(
+            self.id.into(),
+        ));
+        let window_handle = unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) };
+        Ok(window_handle)
+    }
+}
 
-        let view = texture.create_view(&TextureViewDescriptor {
-            label,
-            ..Default::default()
-        });
-        let sampler = self
-            .backend
-            .device
-            .create_sampler(&wgpu::SamplerDescriptor {
-                label,
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            });
+impl raw_window_handle::HasDisplayHandle for WindowHandle {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'static>, raw_window_handle::HandleError> {
+        Ok(raw_window_handle::DisplayHandle::web())
+    }
+}
 
-        Texture {
-            texture: Arc::new(texture),
-            view: Arc::new(view),
-            sampler: Arc::new(sampler),
+impl leptos::IntoAttribute for WindowHandle {
+    fn into_attribute(self) -> leptos::Attribute {
+        leptos::Attribute::String(self.id.to_string().into())
+    }
+
+    fn into_attribute_boxed(self: Box<Self>) -> leptos::Attribute {
+        self.into_attribute()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl SurfaceSize {
+    pub fn from_html_canvas(canvas: &HtmlCanvasElement) -> Self {
+        Self {
+            width: canvas.width().max(1),
+            height: canvas.height().max(1),
+        }
+    }
+
+    pub fn from_surface_configuration(surface_configuration: &wgpu::SurfaceConfiguration) -> Self {
+        Self {
+            width: surface_configuration.width,
+            height: surface_configuration.height,
         }
     }
 }
 
-fn canvas_size(canvas: &HtmlCanvasElement) -> PhysicalSize<u32> {
-    let width = std::cmp::max(1, canvas.width());
-    let height = std::cmp::max(1, canvas.height());
-    PhysicalSize::new(width, height)
+#[derive(Debug)]
+pub struct Surface {
+    backend: Backend,
+    surface: Arc<wgpu::Surface<'static>>,
+    surface_configuration: wgpu::SurfaceConfiguration,
+}
+
+impl Surface {
+    pub async fn resize(&mut self, surface_size: SurfaceSize) {
+        self.surface_configuration.width = surface_size.width;
+        self.surface_configuration.height = surface_size.height;
+        self.surface
+            .configure(&self.backend.device, &self.surface_configuration);
+    }
 }

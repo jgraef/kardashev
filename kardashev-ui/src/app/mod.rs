@@ -6,7 +6,6 @@ use std::sync::{
     RwLock,
 };
 
-use hecs::World;
 use kardashev_client::ApiClient;
 use leptos::{
     component,
@@ -26,6 +25,7 @@ use self::map::Map;
 use crate::{
     app::components::dock::Dock,
     graphics::Graphics,
+    world::World,
 };
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
@@ -48,11 +48,11 @@ impl Default for Urls {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Context {
     pub api_client: ApiClient,
-    pub renderer: Graphics,
-    pub world: Arc<RwLock<World>>,
+    pub graphics: Graphics,
+    pub world: World,
 }
 
 impl Context {
@@ -62,15 +62,15 @@ impl Context {
         let api_client = ApiClient::new(urls.api_url);
 
         tracing::debug!("creating renderer");
-        let renderer = Graphics::new(Default::default());
+        let graphics = Graphics::new(Default::default());
 
         tracing::debug!("creating world");
         let world = World::new();
 
         let context = Self {
             api_client,
-            renderer,
-            world: Arc::new(RwLock::new(world)),
+            graphics,
+            world,
         };
 
         leptos::provide_context(context.clone());
