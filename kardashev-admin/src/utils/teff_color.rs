@@ -1,66 +1,50 @@
-use std::{
-    collections::BTreeMap,
-    ops::Bound,
-};
-
 use lazy_static::lazy_static;
 use palette::LinSrgb;
 use serde::Deserialize;
 
 lazy_static! {
-    static ref TEFF_COLORS: TeffColorTable =
-        TeffColorTable::load_table(include_str!("teff-rgb.csv"));
+    static ref TEFF_COLORS: Vec<(u32, LinSrgb)> = parse_csv();
 }
 
-struct TeffColorTable {
-    data: BTreeMap<u32, LinSrgb>,
-}
+fn parse_csv() -> Vec<(u32, LinSrgb)> {
+    #[derive(Deserialize)]
+    struct Row {
+        t_eff: u32,
+        r: f32,
+        g: f32,
+        b: f32,
+    }
 
-impl TeffColorTable {
-    fn load_table(table: &str) -> Self {
-        #[derive(Deserialize)]
-        struct Row {
-            t_eff: u32,
-            r: f32,
-            g: f32,
-            b: f32,
-        }
-
-        let mut reader = csv::Reader::from_reader(table.as_bytes());
-        let mut data = BTreeMap::new();
-
-        for row in reader.deserialize::<Row>() {
+    const CSV: &'static [u8] = include_bytes!("teff-rgb.csv");
+    let mut reader = csv::Reader::from_reader(CSV);
+    reader
+        .deserialize::<Row>()
+        .map(|row| {
             let row = row.unwrap();
-            data.insert(row.t_eff, LinSrgb::new(row.r, row.g, row.b));
-        }
-
-        Self { data }
-    }
-
-    fn get(&self, t_eff: f32) -> LinSrgb {
-        let t_eff_int = t_eff as u32;
-
-        let cursor = self.data.lower_bound(Bound::Included(&t_eff_int));
-
-        match (cursor.peek_next(), cursor.peek_prev()) {
-            (Some((t_upper, rgb_upper)), Some((t_lower, rgb_lower))) => {
-                let t_lower = *t_lower as f32;
-                let t_upper = *t_upper as f32;
-
-                let k = (t_eff - t_lower) / (t_upper - t_lower);
-
-                LinSrgb::new(
-                    (1.0 - k) * rgb_lower.red + k * rgb_upper.red,
-                    (1.0 - k) * rgb_lower.green + k * rgb_upper.green,
-                    (1.0 - k) * rgb_lower.blue + k * rgb_upper.blue,
-                )
-            }
-            (Some((_, rgb)), None) | (None, Some((_, rgb))) => *rgb,
-            _ => unreachable!(),
-        }
-    }
+            (row.t_eff, LinSrgb::new(row.r, row.g, row.b))
+        })
+        .collect()
 }
 
 pub fn teff_color(t_eff: f32) -> LinSrgb {
-    TEFF_COLORS.get(t_eff)
+    let index = match TEFF_COLORS.binary_search_by_key(&(t_eff as u32), |(t_eff, _)| *t_eff) {
+        Ok(index) | Err(index) => index,
+    };
+
+    if index + 1 == TEFF_COLORS.len() {
+        return TEFF_COLORS[TEFF_COLORS.len() - 1].1;
+    }
+
+    let t_lower = TEFF_COLORS[index].0 as f32;
+    let t_upper = TEFF_COLORS[index + 1].0 as f32;
+
+    let k = (t_eff - t_lower) / (t_upper - t_lower);
+
+    let rgb_lower = TEFF_COLORS[index].1;
+    let rgb_upper = TEFF_COLORS[index + 1].1;
+    LinSrgb::new(
+        (1.0 - k) * rgb_lower.red + k * rgb_upper.red,
+        (1.0 - k) * rgb_lower.green + k * rgb_upper.green,
+        (1.0 - k) * rgb_lower.blue + k * rgb_upper.blue,
+    )
 }

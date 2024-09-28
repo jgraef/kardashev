@@ -3,31 +3,71 @@ use std::sync::Arc;
 use image::RgbaImage;
 use kardashev_protocol::assets::AssetId;
 use linear_map::LinearMap;
+use tokio::sync::{
+    oneshot,
+    watch,
+};
 use wgpu::util::DeviceExt;
 
 use super::BackendId;
+use crate::assets::AssetServer;
 
 #[derive(Debug)]
 pub struct Material {
     asset_id: AssetId,
-    //data: Option<Arc<RwLock<MaterialData>>>,
+    init_requested: bool,
+    rx_init: Option<oneshot::Receiver<watch::Receiver<State>>>,
+    state: Option<watch::Receiver<State>>,
 }
 
-struct MaterialData {}
+impl Material {
+    pub fn new(asset_id: AssetId) -> Self {
+        Self {
+            asset_id,
+            init_requested: false,
+            rx_init: None,
+            state: None,
+        }
+    }
 
-#[derive(Clone, Debug)]
-struct LoadedMaterial {
-    ambient: Option<LoadedTexture>,
-    diffuse: Option<LoadedTexture>,
-    specular: Option<LoadedTexture>,
-    normal: Option<LoadedTexture>,
-    shininess: Option<LoadedTexture>,
-    dissolve: Option<LoadedTexture>,
-    bind_group: Arc<wgpu::BindGroup>,
+    pub fn asset_id(&self) -> AssetId {
+        self.asset_id
+    }
+
+    pub fn poll(&mut self, asset_server: &AssetServer) {
+        if !self.init_requested {
+            //asset_server.load_material(&self.asset_id)
+            self.init_requested = true;
+        }
+
+        if let Some(rx_init) = &mut self.rx_init {
+            match rx_init.try_recv() {
+                Ok(state) => {
+                    self.rx_init = None;
+                    self.state = Some(state);
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    self.rx_init = None;
+                }
+            }
+        }
+    }
+
+    pub fn bind_group(&self, backend_id: BackendId) -> Option<Arc<wgpu::BindGroup>> {
+        self.state
+            .as_ref()
+            .and_then(|rx| rx.borrow().bind_group.get(&backend_id).cloned())
+    }
+}
+
+#[derive(Debug)]
+struct State {
+    bind_group: LinearMap<BackendId, Arc<wgpu::BindGroup>>,
 }
 
 #[derive(Clone, Debug)]
-struct LoadedTexture {
+struct TextureData {
     texture: Arc<wgpu::Texture>,
     view: Arc<wgpu::TextureView>,
     sampler: Arc<wgpu::Sampler>,

@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod event_loop;
 pub mod material;
 pub mod mesh;
 pub mod model;

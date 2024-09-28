@@ -1,5 +1,3 @@
-#![feature(btree_cursors)]
-
 pub mod catalog;
 pub mod import_stars;
 pub mod utils;
