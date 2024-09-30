@@ -1,140 +1,185 @@
-use std::sync::Arc;
+use std::{
+    hash::Hash,
+    sync::Arc,
+};
 
 use image::RgbaImage;
 use kardashev_protocol::assets::AssetId;
 use linear_map::LinearMap;
-use tokio::sync::{
-    oneshot,
-    watch,
-};
-use wgpu::util::DeviceExt;
 
-use super::BackendId;
-use crate::assets::AssetServer;
+use super::{
+    rendering_system::LoadContext,
+    texture::Texture,
+    BackendId,
+};
+use crate::utils::thread_local_cell::ThreadLocalCell;
 
 #[derive(Debug)]
 pub struct Material {
-    asset_id: AssetId,
-    init_requested: bool,
-    rx_init: Option<oneshot::Receiver<watch::Receiver<State>>>,
-    state: Option<watch::Receiver<State>>,
+    asset_id: Option<AssetId>,
+    data: Option<MaterialData>,
+    loaded: LinearMap<BackendId, LoadedMaterial>,
 }
 
 impl Material {
-    pub fn new(asset_id: AssetId) -> Self {
-        Self {
-            asset_id,
-            init_requested: false,
-            rx_init: None,
-            state: None,
-        }
-    }
-
-    pub fn asset_id(&self) -> AssetId {
-        self.asset_id
-    }
-
-    pub fn poll(&mut self, asset_server: &AssetServer) {
-        if !self.init_requested {
-            //asset_server.load_material(&self.asset_id)
-            self.init_requested = true;
-        }
-
-        if let Some(rx_init) = &mut self.rx_init {
-            match rx_init.try_recv() {
-                Ok(state) => {
-                    self.rx_init = None;
-                    self.state = Some(state);
-                }
-                Err(oneshot::error::TryRecvError::Empty) => {}
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    self.rx_init = None;
-                }
+    pub(super) fn loaded(&mut self, context: &LoadContext) -> Option<&LoadedMaterial> {
+        match self.loaded.entry(context.backend.id()) {
+            linear_map::Entry::Occupied(occupied) => Some(occupied.into_mut()),
+            linear_map::Entry::Vacant(vacant) => {
+                let material_data = self.data.as_ref()?;
+                let loaded = material_data.load(context);
+                Some(vacant.insert(loaded))
             }
         }
     }
 
-    pub fn bind_group(&self, backend_id: BackendId) -> Option<Arc<wgpu::BindGroup>> {
-        self.state
-            .as_ref()
-            .and_then(|rx| rx.borrow().bind_group.get(&backend_id).cloned())
+    pub fn from_diffuse_image(diffuse: impl Into<Arc<RgbaImage>>) -> Self {
+        Self {
+            asset_id: None,
+            data: Some(MaterialData {
+                diffuse: Some(diffuse.into()),
+                ..Default::default()
+            }),
+            loaded: LinearMap::new(),
+        }
     }
 }
 
-#[derive(Debug)]
-struct State {
-    bind_group: LinearMap<BackendId, Arc<wgpu::BindGroup>>,
-}
-
 #[derive(Clone, Debug)]
-struct TextureData {
-    texture: Arc<wgpu::Texture>,
-    view: Arc<wgpu::TextureView>,
-    sampler: Arc<wgpu::Sampler>,
+pub struct LoadedMaterial {
+    id: LoadedMaterialId,
+    bind_group: Arc<ThreadLocalCell<wgpu::BindGroup>>,
 }
 
-#[derive(Debug)]
-pub struct LoaderContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub material_bind_group_layout: &'a wgpu::BindGroupLayout,
+impl LoadedMaterial {
+    pub fn id(&self) -> LoadedMaterialId {
+        self.id
+    }
+
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        self.bind_group.get()
+    }
 }
 
-impl Material {
-    pub fn load(image: &RgbaImage, context: &LoaderContext) -> Self {
-        let image_size = image.dimensions();
-        let texture_size = wgpu::Extent3d {
-            width: image_size.0,
-            height: image_size.1,
-            depth_or_array_layers: 1,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LoadedMaterialId(wgpu::Id<wgpu::BindGroup>);
+
+#[derive(Debug, Default)]
+struct MaterialData {
+    ambient: Option<Arc<RgbaImage>>,
+    diffuse: Option<Arc<RgbaImage>>,
+    specular: Option<Arc<RgbaImage>>,
+    normal: Option<Arc<RgbaImage>>,
+    shininess: Option<Arc<RgbaImage>>,
+    dissolve: Option<Arc<RgbaImage>>,
+}
+
+impl MaterialData {
+    pub fn load(&self, context: &LoadContext) -> LoadedMaterial {
+        let load_texture = |image: &RgbaImage| -> Texture {
+            Texture::load(
+                image,
+                context.pipeline.default_sampler.clone(),
+                &context.backend,
+            )
         };
 
-        let diffuse_texture = context.device.create_texture_with_data(
-            &context.queue,
-            &wgpu::TextureDescriptor {
-                size: texture_size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                label: None,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::default(),
-            image.as_raw(),
-        );
+        let ambient = self.ambient.as_deref().map(load_texture);
+        let diffuse = self.diffuse.as_deref().map(load_texture);
+        let specular = self.specular.as_deref().map(load_texture);
+        let normal = self.normal.as_deref().map(load_texture);
+        let shininess = self.shininess.as_deref().map(load_texture);
+        let dissolve = self.dissolve.as_deref().map(load_texture);
 
-        let diffuse_texture_view =
-            diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        fn texture_view_bind_group_entry<'a>(
+            binding: u32,
+            texture: &'a Option<Texture>,
+            fallback: &'a Texture,
+        ) -> wgpu::BindGroupEntry<'a> {
+            wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(
+                    texture
+                        .as_ref()
+                        .map(|texture| &texture.view)
+                        .unwrap_or(&fallback.view),
+                ),
+            }
+        }
 
-        let diffuse_sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        fn texture_sampler_bind_group_entry<'a>(
+            binding: u32,
+            texture: &'a Option<Texture>,
+            fallback: &'a Texture,
+        ) -> wgpu::BindGroupEntry<'a> {
+            wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Sampler(
+                    texture
+                        .as_ref()
+                        .map(|texture| &texture.sampler)
+                        .unwrap_or(&fallback.sampler),
+                ),
+            }
+        }
 
-        let _bind_group = context
+        let bind_group = context
+            .backend
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &context.material_bind_group_layout,
+                layout: &context.pipeline.material_bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                    },
+                    texture_view_bind_group_entry(0, &ambient, &context.pipeline.fallback_texture),
+                    texture_sampler_bind_group_entry(
+                        1,
+                        &ambient,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_view_bind_group_entry(2, &diffuse, &context.pipeline.fallback_texture),
+                    texture_sampler_bind_group_entry(
+                        3,
+                        &diffuse,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_view_bind_group_entry(4, &specular, &context.pipeline.fallback_texture),
+                    texture_sampler_bind_group_entry(
+                        5,
+                        &specular,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_view_bind_group_entry(6, &normal, &context.pipeline.fallback_texture),
+                    texture_sampler_bind_group_entry(
+                        7,
+                        &normal,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_view_bind_group_entry(
+                        8,
+                        &shininess,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_sampler_bind_group_entry(
+                        9,
+                        &shininess,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_view_bind_group_entry(
+                        10,
+                        &dissolve,
+                        &context.pipeline.fallback_texture,
+                    ),
+                    texture_sampler_bind_group_entry(
+                        11,
+                        &dissolve,
+                        &context.pipeline.fallback_texture,
+                    ),
                 ],
-                label: Some("diffuse_bind_group"),
+                label: Some("material bind group"),
             });
 
-        todo!();
+        LoadedMaterial {
+            id: LoadedMaterialId(bind_group.global_id()),
+            bind_group: Arc::new(ThreadLocalCell::new(bind_group)),
+        }
     }
 }

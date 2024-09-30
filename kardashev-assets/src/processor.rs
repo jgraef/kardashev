@@ -184,8 +184,23 @@ impl Process for Asset<Texture> {
             )?;
         }
         else {
-            // todo: copy file to dist folder and write metadata to dist_manifest
-            todo!();
+            let filename = format!("{}.png", self.id);
+            let path = processor.dist_path.join(&filename);
+            let mut writer = BufWriter::new(File::create(&path)?);
+            image.write_to(&mut writer, ImageFormat::Png)?;
+
+            processor.dist_manifest.textures.push(dist::Texture {
+                id: self.id,
+                image: filename.clone(),
+                label: self.label.clone(),
+                size: dist::TextureSize {
+                    w: image.width(),
+                    h: image.height(),
+                },
+                crop: None,
+                u_edge_mode: None,
+                v_edge_mode: None,
+            });
         }
 
         Ok(())

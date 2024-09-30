@@ -21,13 +21,20 @@ use std::{
     },
 };
 
+use rendering_system::RenderingSystem;
 use tokio::sync::{
     mpsc,
     oneshot,
 };
 use web_sys::HtmlCanvasElement;
 
-use crate::utils::spawn_local_and_handle_error;
+use crate::{
+    utils::spawn_local_and_handle_error,
+    world::{
+        Plugin,
+        RegisterPluginContext,
+    },
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -106,11 +113,11 @@ pub enum BackendType {
     WebGl,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct BackendId(NonZeroUsize);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BackendId(NonZeroUsize);
 
 #[derive(Clone, Debug)]
-struct Backend {
+pub struct Backend {
     id: BackendId,
     instance: Arc<wgpu::Instance>,
     adapter: Arc<wgpu::Adapter>,
@@ -169,6 +176,10 @@ impl Backend {
             device: Arc::new(device),
             queue: Arc::new(queue),
         })
+    }
+
+    pub fn id(&self) -> BackendId {
+        self.id
     }
 }
 
@@ -371,10 +382,19 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub async fn resize(&mut self, surface_size: SurfaceSize) {
+    pub fn resize(&mut self, surface_size: SurfaceSize) {
         self.surface_configuration.width = surface_size.width;
         self.surface_configuration.height = surface_size.height;
         self.surface
             .configure(&self.backend.device, &self.surface_configuration);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderPlugin;
+
+impl Plugin for RenderPlugin {
+    fn register(&self, context: RegisterPluginContext) {
+        context.scheduler.add_render_system(RenderingSystem);
     }
 }

@@ -12,6 +12,11 @@ use tokio::sync::{
     oneshot,
 };
 
+pub use self::image_load::{
+    load_image,
+    LoadImage,
+    LoadImageError,
+};
 use crate::utils::spawn_local_and_handle_error;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,11 +37,11 @@ pub enum Error {
 }
 
 #[derive(Debug)]
-pub struct AssetServer {
+pub struct Assets {
     tx_command: mpsc::Sender<Command>,
 }
 
-impl AssetServer {
+impl Assets {
     pub fn new(client: AssetClient) -> Self {
         let (tx_command, rx_command) = mpsc::channel(16);
         Reactor::spawn(client, rx_command);

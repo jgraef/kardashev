@@ -16,6 +16,7 @@ use crate::{
     UrlExt,
 };
 
+#[derive(Clone, Debug)]
 pub struct AssetClient {
     client: reqwest::Client,
     asset_url: Arc<Url>,

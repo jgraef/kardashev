@@ -1,3 +1,5 @@
+pub mod thread_local_cell;
+
 use futures::{
     Future,
     FutureExt,

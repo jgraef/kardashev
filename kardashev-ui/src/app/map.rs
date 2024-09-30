@@ -1,5 +1,6 @@
 use leptos::{
     component,
+    expect_context,
     spawn_local,
     view,
     IntoView,
@@ -13,17 +14,16 @@ use nalgebra::{
 use palette::WithAlpha;
 
 use crate::{
-    app::{
-        components::window::Window,
-        Context,
-    },
+    app::components::window::Window,
     graphics::{
         camera::{
             Camera,
             ClearColor,
         },
+        rendering_system::RenderTarget,
         transform::Transform,
     },
+    world::World,
 };
 
 stylance::import_crate_style!(style, "src/app/map.module.scss");
@@ -32,12 +32,14 @@ stylance::import_crate_style!(style, "src/app/map.module.scss");
 pub fn Map() -> impl IntoView {
     view! {
         <h1>Map</h1>
-        <Window on_load=|render_target| {
+        <Window on_load=|surface| {
+            let render_target = RenderTarget::from_surface(&surface);
+
             spawn_local(async move {
-                let Context { world, .. } = Context::get();
+                let world = expect_context::<World>();
                 world.spawn((
                     Transform {
-                        transform: Similarity3::face_towards(
+                        matrix: Similarity3::face_towards(
                             &Point3::new(-10.0, 0.0, 0.0),
                             &Point3::origin(),
                             &Vector3::new(0.0, 1.0, 0.0),

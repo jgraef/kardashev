@@ -90,6 +90,7 @@ impl Server {
     }
 
     pub async fn bind(self, address: SocketAddr) -> Result<(), Error> {
+        tracing::info!("Listening at http://{address}");
         let listener = TcpListener::bind(address).await?;
         axum::serve(listener, self.router)
             .with_graceful_shutdown(async move { self.shutdown.cancelled().await })
