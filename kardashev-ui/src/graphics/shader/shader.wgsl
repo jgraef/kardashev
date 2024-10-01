@@ -26,6 +26,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(
     model: VertexInput,
+    instance: InstanceInput,
 ) -> VertexOutput {
     var out: VertexOutput;
     

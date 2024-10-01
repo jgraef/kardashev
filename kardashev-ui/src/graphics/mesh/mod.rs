@@ -41,6 +41,7 @@ impl Mesh {
         match self.loaded.entry(context.backend.id()) {
             linear_map::Entry::Occupied(occupied) => Some(occupied.into_mut()),
             linear_map::Entry::Vacant(vacant) => {
+                tracing::debug!(asset_id = ?self.asset_id, backend_id = ?context.backend.id(), "loading mesh to gpu");
                 let mesh_data = self.data.as_ref()?;
                 let loaded = mesh_data.load(context);
                 Some(vacant.insert(loaded))

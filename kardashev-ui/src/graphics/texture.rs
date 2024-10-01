@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use image::RgbaImage;
+use palette::Srgba;
 use wgpu::util::DeviceExt;
 
 use super::Backend;
@@ -46,7 +47,14 @@ impl Texture {
         }
     }
 
-    pub fn black(sampler: Arc<wgpu::Sampler>, backend: &Backend) -> Self {
+    pub fn color1x1<C: palette::stimulus::IntoStimulus<u8>>(
+        color: Srgba<C>,
+        sampler: Arc<wgpu::Sampler>,
+        backend: &Backend,
+    ) -> Self {
+        let color: Srgba<u8> = color.into_format();
+        let data = [color.red, color.green, color.blue, color.alpha];
+
         let texture = backend.device.create_texture_with_data(
             &backend.queue,
             &wgpu::TextureDescriptor {
@@ -64,7 +72,7 @@ impl Texture {
                 view_formats: &[],
             },
             wgpu::util::TextureDataOrder::default(),
-            &[0, 0, 0],
+            &data,
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

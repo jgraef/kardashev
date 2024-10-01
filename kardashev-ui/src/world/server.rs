@@ -1,3 +1,4 @@
+use hecs::Entity;
 use tokio::sync::{
     mpsc,
     oneshot,
@@ -120,6 +121,10 @@ impl World {
         rx_entity.await.unwrap()
     }
 
+    pub async fn despawn(&self, entity: Entity) {
+        self.send_command(Command::DespawnEntity { entity }).await;
+    }
+
     pub async fn run_oneshot_system(&self, system: impl OneshotSystem) {
         self.send_command(Command::RunOneshotSystem {
             system: Box::new(system),
@@ -135,6 +140,9 @@ enum Command {
     SpawnEntity {
         builder: hecs::EntityBuilder,
         tx_entity: oneshot::Sender<hecs::Entity>,
+    },
+    DespawnEntity {
+        entity: Entity,
     },
     RunOneshotSystem {
         system: Box<dyn DynOneshotSystem>,
@@ -211,6 +219,9 @@ impl WorldServer {
             } => {
                 let entity = self.world.spawn(builder.build());
                 let _ = tx_entity.send(entity);
+            }
+            Command::DespawnEntity { entity } => {
+                self.world.despawn(entity);
             }
             Command::RunOneshotSystem { system } => {
                 let mut context = RunSystemContext {

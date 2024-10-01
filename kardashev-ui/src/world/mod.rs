@@ -4,6 +4,8 @@ mod schedule;
 mod server;
 mod system;
 
+use std::borrow::Cow;
+
 pub use self::{
     plugin::{
         Plugin,
@@ -21,3 +23,8 @@ pub use self::{
         System,
     },
 };
+
+#[derive(Clone, Debug)]
+pub struct Label {
+    pub label: Cow<'static, str>,
+}

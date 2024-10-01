@@ -25,6 +25,7 @@ use rendering_system::RenderingSystem;
 use tokio::sync::{
     mpsc,
     oneshot,
+    watch,
 };
 use web_sys::HtmlCanvasElement;
 
@@ -98,10 +99,13 @@ impl Graphics {
             surface_configuration,
         } = rx_result.await.unwrap()?;
 
+        let (tx_resize, _) = watch::channel(surface_size);
+
         Ok(Surface {
             backend,
             surface: Arc::new(surface),
             surface_configuration,
+            tx_resize,
         })
     }
 }
@@ -232,6 +236,8 @@ impl Reactor {
         window_handle: WindowHandle,
         surface_size: SurfaceSize,
     ) -> Result<CreateSurfaceResponse, Error> {
+        tracing::info!(?window_handle, ?surface_size, "creating surface");
+
         let (surface, backend) = if let Some(backend) = &self.shared_backend {
             let surface = backend
                 .instance
@@ -379,14 +385,49 @@ pub struct Surface {
     backend: Backend,
     surface: Arc<wgpu::Surface<'static>>,
     surface_configuration: wgpu::SurfaceConfiguration,
+    tx_resize: watch::Sender<SurfaceSize>,
 }
 
 impl Surface {
     pub fn resize(&mut self, surface_size: SurfaceSize) {
         self.surface_configuration.width = surface_size.width;
         self.surface_configuration.height = surface_size.height;
+        tracing::info!(backend = ?self.backend.id, ?surface_size, "reconfiguring surface");
+        let _ = self.tx_resize.send(surface_size);
         self.surface
             .configure(&self.backend.device, &self.surface_configuration);
+    }
+
+    pub fn size_listener(&self) -> SurfaceSizeListener {
+        SurfaceSizeListener {
+            rx_resize: self.tx_resize.subscribe(),
+        }
+    }
+
+    pub fn size(&self) -> SurfaceSize {
+        self.tx_resize.borrow().clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct SurfaceSizeListener {
+    rx_resize: watch::Receiver<SurfaceSize>,
+}
+
+impl SurfaceSizeListener {
+    pub fn get(&self) -> SurfaceSize {
+        self.rx_resize.borrow().clone()
+    }
+
+    pub fn poll(&mut self) -> Option<SurfaceSize> {
+        self.rx_resize
+            .has_changed()
+            .unwrap_or_default()
+            .then(|| self.rx_resize.borrow_and_update().clone())
+    }
+
+    pub async fn wait(&mut self) -> Option<SurfaceSize> {
+        Some(self.rx_resize.wait_for(|_| true).await.ok()?.clone())
     }
 }
 

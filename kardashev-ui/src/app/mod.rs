@@ -21,9 +21,7 @@ use leptos_router::{
     Routes,
 };
 use nalgebra::{
-    Point3,
     Similarity3,
-    Translation3,
     Vector3,
 };
 use url::Url;
@@ -31,10 +29,7 @@ use url::Url;
 use self::map::Map;
 use crate::{
     app::components::dock::Dock,
-    assets::{
-        load_image,
-        Assets,
-    },
+    assets::load_image,
     error::Error,
     graphics::{
         material::Material,
@@ -45,7 +40,6 @@ use crate::{
             Meshable,
         },
         transform::Transform,
-        Graphics,
         RenderPlugin,
     },
     world::{
@@ -82,6 +76,13 @@ pub fn App() -> impl IntoView {
     provide_client();
     provide_graphics();
     provide_world();
+
+    /*let (log_level, _, _) = use_local_storage::<Option<tracing::Level>, OptionCodec<FromToStringCodec>>("log-level");
+    create_effect(move |_| {
+        let log_level = log_level.get().unwrap_or(Level::DEBUG);
+        tracing::info!("setting log level to {log_level:?}");
+        tracing_wasm::set_as_global_default_with_config(WASMLayerConfigBuilder::new().set_max_level(log_level).build());
+    });*/
 
     view! {
         <Router>

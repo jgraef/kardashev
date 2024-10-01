@@ -8,7 +8,10 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use palette::Srgba;
+use palette::{
+    Srgba,
+    WithAlpha,
+};
 use wgpu::util::DeviceExt;
 
 use super::{
@@ -23,6 +26,7 @@ use super::{
     texture::Texture,
     Backend,
     SurfaceSize,
+    SurfaceSizeListener,
 };
 use crate::{
     error::Error,
@@ -38,6 +42,7 @@ use crate::{
     },
     utils::thread_local_cell::ThreadLocalCell,
     world::{
+        Label,
         RunSystemContext,
         System,
     },
@@ -55,13 +60,24 @@ impl System for RenderingSystem {
         &'s mut self,
         context: &'d mut RunSystemContext<'c>,
     ) -> Result<(), Error> {
-        let mut cameras =
-            context
-                .world
-                .query::<(&Camera, &Transform, Option<&ClearColor>, &mut RenderTarget)>();
+        let mut cameras = context.world.query::<(
+            &Camera,
+            &Transform,
+            Option<&ClearColor>,
+            &mut RenderTarget,
+            Option<&Label>,
+        )>();
 
-        for (_, (camera, camera_transform, clear_color, render_target)) in cameras.iter() {
+        for (_, (camera, camera_transform, clear_color, render_target, label)) in cameras.iter() {
             let render_target = render_target.inner.get_mut();
+
+            if let Some(surface_size) = render_target.surface_size_listener.poll() {
+                tracing::debug!(?label, ?surface_size, "surface resized");
+                render_target.depth_texture =
+                    DepthTexture::new(&render_target.backend, surface_size);
+            }
+
+            tracing::debug!(?label, "rendering camera");
 
             let target_texture = render_target
                 .surface
@@ -84,6 +100,8 @@ impl System for RenderingSystem {
                 0,
                 bytemuck::bytes_of(&camera_uniform),
             );
+
+            tracing::trace!("begin render pass");
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("render pass"),
@@ -115,6 +133,8 @@ impl System for RenderingSystem {
 
             render_pass.set_pipeline(&render_target.pipeline.pipeline);
 
+            tracing::trace!("batching");
+
             let mut render_entities = context
                 .world
                 .query::<(&Transform, &mut Mesh, &mut Material)>();
@@ -144,6 +164,8 @@ impl System for RenderingSystem {
                 &mut render_pass,
             );
 
+            tracing::trace!("submit command encoder");
+            drop(render_pass);
             render_target.backend.queue.submit(Some(encoder.finish()));
             target_texture.present();
         }
@@ -168,42 +190,46 @@ impl Pipeline {
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader/shader.wgsl"));
 
-        let material_texture_view_bind_group_entry = wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            },
-            count: None,
-        };
+        fn material_texture_view_bind_group_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+            wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            }
+        }
 
-        let material_sampler_bind_group_entry = wgpu::BindGroupLayoutEntry {
-            binding: 1,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            // This should match the filterable field of the
-            // corresponding Texture entry above.
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        };
+        fn material_sampler_bind_group_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+            wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                // This should match the filterable field of the
+                // corresponding Texture entry above.
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            }
+        }
 
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("texture bind group layout"),
                 entries: &[
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
-                    material_texture_view_bind_group_entry,
-                    material_sampler_bind_group_entry,
+                    material_texture_view_bind_group_entry(0),
+                    material_sampler_bind_group_entry(1),
+                    material_texture_view_bind_group_entry(2),
+                    material_sampler_bind_group_entry(3),
+                    material_texture_view_bind_group_entry(4),
+                    material_sampler_bind_group_entry(5),
+                    material_texture_view_bind_group_entry(6),
+                    material_sampler_bind_group_entry(7),
+                    material_texture_view_bind_group_entry(8),
+                    material_sampler_bind_group_entry(9),
+                    material_texture_view_bind_group_entry(10),
+                    material_sampler_bind_group_entry(11),
                 ],
             });
 
@@ -282,7 +308,11 @@ impl Pipeline {
             ..Default::default()
         }));
 
-        let fallback_texture = Texture::black(default_sampler.clone(), &surface.backend);
+        let fallback_texture = Texture::color1x1(
+            palette::named::BLACK.with_alpha(0),
+            default_sampler.clone(),
+            &surface.backend,
+        );
 
         Self {
             pipeline_layout,
@@ -327,16 +357,14 @@ impl RenderTarget {
                     label: Some("camera_bind_group"),
                 });
 
-        let depth_texture = DepthTexture::new(
-            &surface.backend,
-            SurfaceSize::from_surface_configuration(&surface.surface_configuration),
-        );
+        let depth_texture = DepthTexture::new(&surface.backend, surface.size());
 
         let draw_batcher = DrawBatcher::new(&surface.backend);
 
         Self {
             inner: ThreadLocalCell::new(RenderTargetInner {
                 surface: surface.surface.clone(),
+                surface_size_listener: surface.size_listener(),
                 backend: surface.backend.clone(),
                 pipeline: Arc::new(pipeline),
                 camera_buffer,
@@ -351,6 +379,7 @@ impl RenderTarget {
 #[derive(Debug)]
 struct RenderTargetInner {
     pub surface: Arc<wgpu::Surface<'static>>,
+    pub surface_size_listener: SurfaceSizeListener,
     pub backend: Backend,
     pub pipeline: Arc<Pipeline>,
     pub camera_buffer: wgpu::Buffer,
@@ -465,11 +494,11 @@ struct CameraUniform {
 impl CameraUniform {
     fn from_camera(camera: &Camera, transform: &Transform) -> Self {
         Self {
-            view_projection: (camera.projection * transform.matrix.inverse())
-                .matrix()
-                .as_slice()
-                .try_into()
-                .unwrap(),
+            view_projection: (camera.matrix.as_matrix()
+                * transform.matrix.inverse().to_homogeneous())
+            .as_slice()
+            .try_into()
+            .unwrap(),
         }
     }
 }
@@ -560,20 +589,24 @@ impl DrawBatcher {
     ) {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
-            let start_index = self.instances.len() as u64;
-            let num_instances = entry.instances.len() as u32;
+            let start_index = self.instances.len() as u32;
             self.instances.extend(entry.instances.drain(..));
-            let end_index = self.instances.len() as u64;
+            let end_index = self.instances.len() as u32;
 
             self.batches.push(DrawBatch {
                 range: start_index..end_index,
                 mesh: entry.mesh,
                 material: entry.material,
-                num_instances,
             });
 
             self.reuse_instance_vecs.push(entry.instances);
         }
+
+        tracing::trace!(
+            num_instances = self.instances.len(),
+            num_batches = self.batches.len(),
+            "drawing batched"
+        );
 
         // resize buffer if needed
         if self.instances.len() > self.instance_buffer_size {
@@ -592,22 +625,20 @@ impl DrawBatcher {
 
         // render batches
         for batch in self.batches.drain(..) {
+            tracing::trace!(?batch.range, "drawing batch");
+
             let mesh_buffers = batch.mesh.buffers();
             let material_bind_group = batch.material.bind_group();
 
             render_pass.set_vertex_buffer(0, mesh_buffers.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(batch.range));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(
                 mesh_buffers.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint16,
             );
             render_pass.set_bind_group(0, material_bind_group, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
-            render_pass.draw_indexed(
-                0..mesh_buffers.num_indices as u32,
-                0,
-                0..batch.num_instances,
-            );
+            render_pass.draw_indexed(0..mesh_buffers.num_indices as u32, 0, batch.range);
         }
     }
 
@@ -635,10 +666,9 @@ struct DrawBatchEntry {
 
 #[derive(Debug)]
 struct DrawBatch {
-    range: Range<u64>,
+    range: Range<u32>,
     mesh: LoadedMesh,
     material: LoadedMaterial,
-    num_instances: u32,
 }
 
 fn create_instance_buffer(backend: &Backend, size: usize) -> wgpu::Buffer {
@@ -648,7 +678,7 @@ fn create_instance_buffer(backend: &Backend, size: usize) -> wgpu::Buffer {
         label: Some("instance buffer"),
         size: (size * std::mem::size_of::<Instance>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: true,
+        mapped_at_creation: false,
     })
 }
 

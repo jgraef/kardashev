@@ -7,12 +7,21 @@ pub mod graphics;
 pub mod utils;
 pub mod world;
 
+use tracing::Level;
+use tracing_wasm::{
+    WASMLayerConfig,
+    WASMLayerConfigBuilder,
+};
 use wasm_bindgen::JsCast;
 
 use crate::app::App;
 
 fn main() {
-    tracing_wasm::set_as_global_default();
+    tracing_wasm::set_as_global_default_with_config(
+        WASMLayerConfigBuilder::new()
+            .set_max_level(Level::DEBUG)
+            .build(),
+    );
     console_error_panic_hook::set_once();
 
     tracing::info!("starting app");

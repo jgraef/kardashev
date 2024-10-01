@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use futures::StreamExt;
+
 use super::{
     system::{
         DynOneshotSystem,
@@ -28,11 +30,11 @@ impl Default for Scheduler {
 }
 
 impl Scheduler {
-    pub fn set_fps(&mut self, fps: u64) {
+    pub fn set_fps(&mut self, fps: u32) {
         self.render_systems.set_ups(fps);
     }
 
-    pub fn set_ups(&mut self, ups: u64) {
+    pub fn set_ups(&mut self, ups: u32) {
         self.update_systems.set_ups(ups);
     }
 
@@ -55,14 +57,14 @@ pub(super) struct TimedSystems {
 }
 
 impl TimedSystems {
-    pub fn new(ups: u64) -> Self {
+    pub fn new(ups: u32) -> Self {
         Self {
             interval: Interval::new(ups),
             systems: vec![],
         }
     }
 
-    pub fn set_ups(&mut self, ups: u64) {
+    pub fn set_ups(&mut self, ups: u32) {
         self.interval = Interval::new(ups);
     }
 
@@ -79,7 +81,6 @@ impl TimedSystems {
         context: &'d mut RunSystemContext<'c>,
     ) -> Result<(), Error> {
         for system in &mut self.systems {
-            tracing::debug!(label = %system.label(), "running system");
             system.run(context).await?;
         }
 
@@ -88,18 +89,17 @@ impl TimedSystems {
 }
 
 struct Interval {
-    // note: I think this doesn't work on wasm
-    inner: tokio::time::Interval,
+    inner: gloo_timers::future::IntervalStream,
 }
 
 impl Interval {
-    pub fn new(ups: u64) -> Self {
+    pub fn new(ups: u32) -> Self {
         Self {
-            inner: tokio::time::interval(Duration::from_millis(1000 / ups)),
+            inner: gloo_timers::future::IntervalStream::new(1000 / ups),
         }
     }
 
     pub async fn tick(&mut self) {
-        self.inner.tick().await;
+        self.inner.next().await;
     }
 }
