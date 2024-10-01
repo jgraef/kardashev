@@ -8,6 +8,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use nalgebra::Matrix4;
 use palette::{
     Srgba,
     WithAlpha,
@@ -15,31 +16,30 @@ use palette::{
 use wgpu::util::DeviceExt;
 
 use super::{
+    camera::{
+        Camera,
+        ClearColor,
+    },
     material::{
         LoadedMaterial,
         LoadedMaterialId,
+        Material,
     },
     mesh::{
         LoadedMesh,
         LoadedMeshId,
+        Mesh,
     },
     texture::Texture,
+    transform::GlobalTransform,
     Backend,
+    Surface,
     SurfaceSize,
     SurfaceSizeListener,
+    SurfaceVisibilityListener,
 };
 use crate::{
     error::Error,
-    graphics::{
-        camera::{
-            Camera,
-            ClearColor,
-        },
-        material::Material,
-        mesh::Mesh,
-        transform::Transform,
-        Surface,
-    },
     utils::thread_local_cell::ThreadLocalCell,
     world::{
         Label,
@@ -62,7 +62,7 @@ impl System for RenderingSystem {
     ) -> Result<(), Error> {
         let mut cameras = context.world.query::<(
             &Camera,
-            &Transform,
+            &GlobalTransform,
             Option<&ClearColor>,
             &mut RenderTarget,
             Option<&Label>,
@@ -75,6 +75,11 @@ impl System for RenderingSystem {
                 tracing::debug!(?label, ?surface_size, "surface resized");
                 render_target.depth_texture =
                     DepthTexture::new(&render_target.backend, surface_size);
+            }
+
+            if !render_target.is_visible() {
+                tracing::debug!(?label, "skipping camera (not visible)");
+                continue;
             }
 
             tracing::debug!(?label, "rendering camera");
@@ -137,7 +142,8 @@ impl System for RenderingSystem {
 
             let mut render_entities = context
                 .world
-                .query::<(&Transform, &mut Mesh, &mut Material)>();
+                .query::<(&GlobalTransform, &mut Mesh, &mut Material)>();
+
             for (_entity, (transform, mesh, material)) in render_entities.iter() {
                 let load_context = render_target.load_context();
 
@@ -277,7 +283,8 @@ impl Pipeline {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                //cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -365,6 +372,7 @@ impl RenderTarget {
             inner: ThreadLocalCell::new(RenderTargetInner {
                 surface: surface.surface.clone(),
                 surface_size_listener: surface.size_listener(),
+                surface_visibility_listener: surface.visibility_listener(),
                 backend: surface.backend.clone(),
                 pipeline: Arc::new(pipeline),
                 camera_buffer,
@@ -380,6 +388,7 @@ impl RenderTarget {
 struct RenderTargetInner {
     pub surface: Arc<wgpu::Surface<'static>>,
     pub surface_size_listener: SurfaceSizeListener,
+    pub surface_visibility_listener: SurfaceVisibilityListener,
     pub backend: Backend,
     pub pipeline: Arc<Pipeline>,
     pub camera_buffer: wgpu::Buffer,
@@ -394,6 +403,10 @@ impl RenderTargetInner {
             backend: &self.backend,
             pipeline: &self.pipeline,
         }
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.surface_visibility_listener.is_visible()
     }
 }
 
@@ -444,10 +457,10 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn from_transform(transform: &Transform) -> Self {
+    pub fn from_transform(transform: &GlobalTransform) -> Self {
         Self {
             transform: transform
-                .matrix
+                .model_matrix
                 .to_homogeneous()
                 .as_slice()
                 .try_into()
@@ -492,10 +505,26 @@ struct CameraUniform {
 }
 
 impl CameraUniform {
-    fn from_camera(camera: &Camera, transform: &Transform) -> Self {
+    fn from_camera(camera: &Camera, transform: &GlobalTransform) -> Self {
+        #[rustfmt::skip]
+        pub const NALGEBRA_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.5,
+            0.0, 0.0, 0.0, 1.0,
+        );
+
+        #[rustfmt::skip]
+        pub const TEST: Matrix4<f32> = Matrix4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, -1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        );
+
         Self {
-            view_projection: (camera.matrix.as_matrix()
-                * transform.matrix.inverse().to_homogeneous())
+            view_projection: (camera.projection_matrix.as_matrix()
+                * transform.model_matrix.inverse().to_homogeneous())
             .as_slice()
             .try_into()
             .unwrap(),

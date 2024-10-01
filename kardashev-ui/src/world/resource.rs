@@ -28,3 +28,6 @@ impl Resources {
             .map(|resource| resource.downcast_mut().unwrap())
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tick(pub u64);

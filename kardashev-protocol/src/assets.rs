@@ -111,3 +111,10 @@ pub struct Mesh {
 pub enum Message {
     Reload { asset_id: AssetId },
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompiledShader {
+    pub label: Option<String>,
+    pub module: naga::Module,
+    pub module_info: naga::valid::ModuleInfo,
+}

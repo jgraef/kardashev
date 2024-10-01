@@ -1,6 +1,5 @@
-use std::time::Duration;
-
 use futures::StreamExt;
+use tracing::Instrument;
 
 use super::{
     system::{
@@ -81,7 +80,8 @@ impl TimedSystems {
         context: &'d mut RunSystemContext<'c>,
     ) -> Result<(), Error> {
         for system in &mut self.systems {
-            system.run(context).await?;
+            let span = tracing::debug_span!("system", label = system.label());
+            system.run(context).instrument(span).await?;
         }
 
         Ok(())

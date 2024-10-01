@@ -2,11 +2,7 @@ mod constants;
 mod galaxy;
 mod time_scale;
 
-use std::{
-    collections::BTreeSet,
-    fs::File,
-    io::BufReader,
-};
+use std::collections::BTreeSet;
 
 use clap::Parser;
 pub use color_eyre::eyre::Error;

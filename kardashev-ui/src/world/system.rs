@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
 };
 

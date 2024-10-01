@@ -10,5 +10,5 @@ pub struct RegisterPluginContext<'a> {
 }
 
 pub trait Plugin: 'static {
-    fn register(&self, context: RegisterPluginContext);
+    fn register(self, context: RegisterPluginContext);
 }

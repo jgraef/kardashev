@@ -185,7 +185,7 @@ impl Reactor {
 
     async fn handle_event(&mut self, event: dist::Message) -> Result<(), Error> {
         match event {
-            dist::Message::Reload { asset_id } => {
+            dist::Message::Reload { asset_id: _ } => {
                 // todo: the specified asset was changed and can be reloaded
             }
         }

@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+};
 
 use kardashev_protocol::assets::AssetId;
 use serde::Deserialize;
@@ -6,39 +9,38 @@ use serde::Deserialize;
 use crate::atlas::AtlasBuilderId;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     #[serde(default)]
-    pub texture: Vec<Asset<Texture>>,
+    pub textures: HashMap<AssetId, Texture>,
 
     #[serde(default)]
-    pub material: Vec<Asset<Material>>,
+    pub materials: HashMap<AssetId, Material>,
 
     #[serde(default)]
-    pub mesh: Vec<Asset<Mesh>>,
+    pub meshes: HashMap<AssetId, Mesh>,
 
     #[serde(default)]
-    pub model: Vec<Asset<Model>>,
+    pub models: HashMap<AssetId, Model>,
 
     #[serde(default)]
-    pub sound: Vec<Asset<Sound>>,
+    pub sounds: HashMap<AssetId, Sound>,
+
+    #[serde(default)]
+    pub shaders: HashMap<AssetId, Shader>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Asset<T> {
-    pub id: AssetId,
-
+#[serde(deny_unknown_fields)]
+pub struct Mesh {
     pub label: Option<String>,
-
-    #[serde(flatten)]
-    pub inner: T,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Mesh {}
-
-#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Texture {
-    pub path: Option<PathBuf>,
+    pub label: Option<String>,
+    pub path: PathBuf,
     pub atlas: Option<AtlasDef>,
     pub convert_to: Option<ImageFormat>,
     pub scale_to: Option<ScaleTo>,
@@ -62,6 +64,7 @@ pub enum ImageFormat {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScaleTo {
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -108,26 +111,35 @@ impl From<AtlasDef> for Option<AtlasBuilderId> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Material {
-    Textures {
-        diffuse: Option<TextureRef>,
-        // todo
-    },
+#[serde(deny_unknown_fields)]
+pub struct Material {
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Model {}
+#[serde(deny_unknown_fields)]
+pub struct Model {
+    pub label: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sound {
-    pub path: Option<PathBuf>,
+    pub label: Option<String>,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum TextureRef {
     Ident(String),
     Texture { texture: String },
     Path { path: PathBuf },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shader {
+    pub label: Option<String>,
+    pub path: PathBuf,
 }

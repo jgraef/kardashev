@@ -20,10 +20,7 @@ use leptos_router::{
     Router,
     Routes,
 };
-use nalgebra::{
-    Similarity3,
-    Vector3,
-};
+use nalgebra::Similarity3;
 use url::Url;
 
 use self::map::Map;
@@ -42,6 +39,7 @@ use crate::{
         transform::Transform,
         RenderPlugin,
     },
+    input::InputPlugin,
     world::{
         OneshotSystem,
         RunSystemContext,
@@ -117,6 +115,7 @@ fn provide_world() {
     let world = World::builder()
         .with_resource(asset_client)
         .with_resource(api_client)
+        .with_plugin(InputPlugin::default())
         .with_plugin(RenderPlugin)
         .with_startup_system({
             struct StartupSystem;
@@ -137,7 +136,7 @@ fn provide_world() {
 
                     // todo: use asset server
                     let star_texture =
-                        load_image("assets/12dc9bbe-ca8f-4860-a739-26357e4e3bd2.png")
+                        load_image("assets/796e953f-3985-4cc2-994b-ff74aaba2fe9.png")
                             .await
                             .unwrap();
                     let mesh = Mesh::from(shape::Sphere::default().mesh().build());
@@ -145,7 +144,7 @@ fn provide_world() {
 
                     context.world.spawn((
                         Transform {
-                            matrix: Similarity3::new(Vector3::zeros(), Vector3::zeros(), 1.0),
+                            model_matrix: Similarity3::identity(),
                         },
                         mesh,
                         material,

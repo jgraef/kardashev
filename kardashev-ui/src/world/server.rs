@@ -5,7 +5,10 @@ use tokio::sync::{
 };
 
 use super::{
-    resource::Resources,
+    resource::{
+        Resources,
+        Tick,
+    },
     schedule::Scheduler,
     system::{
         DynOneshotSystem,
@@ -79,7 +82,7 @@ impl Builder {
     }
 
     pub fn build(self) -> World {
-        let (tx_command, rx_command) = mpsc::channel(16);
+        let (tx_command, rx_command) = mpsc::unbounded_channel();
 
         spawn_local_and_handle_error(async move {
             let server = WorldServer::new(rx_command, self);
@@ -92,7 +95,7 @@ impl Builder {
 
 #[derive(Clone, Debug)]
 pub struct World {
-    tx_command: mpsc::Sender<Command>,
+    tx_command: mpsc::UnboundedSender<Command>,
 }
 
 impl World {
@@ -100,36 +103,30 @@ impl World {
         Builder::default()
     }
 
-    async fn send_command(&self, command: Command) {
-        self.tx_command
-            .send(command)
-            .await
-            .expect("world server died");
+    fn send_command(&self, command: Command) {
+        self.tx_command.send(command).expect("world server died");
     }
 
-    pub async fn submit(&self, command_buffer: hecs::CommandBuffer) {
+    pub fn submit(&self, command_buffer: hecs::CommandBuffer) {
         self.send_command(Command::SubmitCommandBuffer { command_buffer })
-            .await;
     }
 
     pub async fn spawn(&self, bundle: impl hecs::DynamicBundle) -> hecs::Entity {
         let mut builder = hecs::EntityBuilder::new();
         builder.add_bundle(bundle);
         let (tx_entity, rx_entity) = oneshot::channel();
-        self.send_command(Command::SpawnEntity { builder, tx_entity })
-            .await;
+        self.send_command(Command::SpawnEntity { builder, tx_entity });
         rx_entity.await.unwrap()
     }
 
-    pub async fn despawn(&self, entity: Entity) {
-        self.send_command(Command::DespawnEntity { entity }).await;
+    pub fn despawn(&self, entity: Entity) {
+        self.send_command(Command::DespawnEntity { entity });
     }
 
-    pub async fn run_oneshot_system(&self, system: impl OneshotSystem) {
+    pub fn run_oneshot_system(&self, system: impl OneshotSystem) {
         self.send_command(Command::RunOneshotSystem {
             system: Box::new(system),
-        })
-        .await;
+        });
     }
 }
 
@@ -150,14 +147,16 @@ enum Command {
 }
 
 struct WorldServer {
-    rx_command: mpsc::Receiver<Command>,
+    rx_command: mpsc::UnboundedReceiver<Command>,
     world: hecs::World,
     resources: Resources,
     scheduler: Scheduler,
 }
 
 impl WorldServer {
-    fn new(rx_command: mpsc::Receiver<Command>, builder: Builder) -> Self {
+    fn new(rx_command: mpsc::UnboundedReceiver<Command>, mut builder: Builder) -> Self {
+        builder.resources.insert(Tick::default());
+
         Self {
             rx_command,
             world: builder.world,
@@ -203,6 +202,8 @@ impl WorldServer {
                     context.apply_buffered();
                 }
             }
+
+            self.resources.get_mut::<Tick>().unwrap().0 += 1;
         }
 
         Ok(())
@@ -221,7 +222,7 @@ impl WorldServer {
                 let _ = tx_entity.send(entity);
             }
             Command::DespawnEntity { entity } => {
-                self.world.despawn(entity);
+                let _ = self.world.despawn(entity);
             }
             Command::RunOneshotSystem { system } => {
                 let mut context = RunSystemContext {

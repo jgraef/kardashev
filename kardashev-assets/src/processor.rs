@@ -19,6 +19,11 @@ use image::{
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
+    CompiledShader,
+};
+use serde::{
+    Deserialize,
+    Serialize,
 };
 use walkdir::WalkDir;
 
@@ -28,10 +33,10 @@ use crate::{
         AtlasBuilderId,
     },
     source::{
-        Asset,
         Manifest,
         Material,
         ScaleTo,
+        Shader,
         Texture,
     },
     Error,
@@ -73,14 +78,14 @@ impl Processor {
         macro_rules! process {
             ($($field:ident),*) => {
                 $(
-                    for asset in &manifest.$field {
-                        asset.process(self, path)?;
+                    for (id, asset) in &manifest.$field {
+                        asset.process(*id, self, path)?;
                     }
                 )*
             };
         }
 
-        process!(texture);
+        process!(textures, shaders);
         //process!(texture, material, mesh, model, sound);
 
         Ok(())
@@ -118,23 +123,28 @@ impl Processor {
 }
 
 pub trait Process {
-    fn process(&self, processor: &mut Processor, manifest_path: &Path) -> Result<(), Error>;
+    fn process(
+        &self,
+        id: AssetId,
+        processor: &mut Processor,
+        manifest_path: &Path,
+    ) -> Result<(), Error>;
 }
 
-impl Process for Asset<Texture> {
-    fn process(&self, processor: &mut Processor, manifest_path: &Path) -> Result<(), Error> {
-        let path = or_default_filename(
-            self.inner.path.as_deref(),
-            self.id,
-            self.label.as_deref(),
-            manifest_path,
-            &["png", "jpg", "jpeg", "tif", "webp"],
-        )?;
+impl Process for Texture {
+    fn process(
+        &self,
+        id: AssetId,
+        processor: &mut Processor,
+        manifest_path: &Path,
+    ) -> Result<(), Error> {
+        let path = input_path(manifest_path, &self.path);
 
-        tracing::debug!(id = %self.id, label = ?self.label, path = %path.display(), "processing image");
+        tracing::debug!(%id, label = ?self.label, path = %path.display(), "processing image");
+
         let mut image = ImageReader::open(&path)?.decode()?;
 
-        if let Some(scale_to) = &self.inner.scale_to {
+        if let Some(scale_to) = &self.scale_to {
             let new_dimensions = match scale_to {
                 ScaleTo {
                     width: Some(width),
@@ -170,7 +180,7 @@ impl Process for Asset<Texture> {
             );
         }
 
-        if let Some(atlas_builder_id) = self.inner.atlas.clone().unwrap_or_default().into() {
+        if let Some(atlas_builder_id) = self.atlas.clone().unwrap_or_default().into() {
             let atlas_builder = processor
                 .atlas_builders
                 .entry(atlas_builder_id)
@@ -178,19 +188,19 @@ impl Process for Asset<Texture> {
             atlas_builder.insert(
                 image.to_rgba8(),
                 UnfinishedTexture {
-                    id: self.id,
+                    id,
                     label: self.label.clone(),
                 },
             )?;
         }
         else {
-            let filename = format!("{}.png", self.id);
+            let filename = format!("{id}.png");
             let path = processor.dist_path.join(&filename);
             let mut writer = BufWriter::new(File::create(&path)?);
             image.write_to(&mut writer, ImageFormat::Png)?;
 
             processor.dist_manifest.textures.push(dist::Texture {
-                id: self.id,
+                id,
                 image: filename.clone(),
                 label: self.label.clone(),
                 size: dist::TextureSize {
@@ -213,12 +223,65 @@ struct UnfinishedTexture {
     label: Option<String>,
 }
 
-impl Process for Asset<Material> {
-    fn process(&self, processor: &mut Processor, manifest_path: &Path) -> Result<(), Error> {
+impl Process for Material {
+    fn process(
+        &self,
+        _id: AssetId,
+        _processor: &mut Processor,
+        _manifest_path: &Path,
+    ) -> Result<(), Error> {
         todo!()
     }
 }
 
+impl Process for Shader {
+    fn process(
+        &self,
+        id: AssetId,
+        processor: &mut Processor,
+        manifest_path: &Path,
+    ) -> Result<(), Error> {
+        let path = input_path(manifest_path, &self.path);
+        tracing::debug!(%id, path=%path.display(), "processing shader");
+
+        let source = std::fs::read_to_string(&path)?;
+        let module = naga::front::wgsl::parse_str(&source)?;
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+
+        match validator.validate(&module) {
+            Ok(module_info) => {
+                let compiled = CompiledShader {
+                    label: self.label.clone(),
+                    module,
+                    module_info,
+                };
+                let filename = format!("{id}.dat");
+                let path = processor.dist_path.join(&filename);
+                let mut writer = BufWriter::new(File::create(&path)?);
+                //serde_json::to_writer_pretty(writer, &compiled)?;
+                rmp_serde::encode::write(&mut writer, &compiled)?;
+            }
+            Err(error) => {
+                error.emit_to_stderr_with_path(&source, &path.to_string_lossy());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn input_path(manifest_path: impl AsRef<Path>, file_path: impl AsRef<Path>) -> PathBuf {
+    manifest_path
+        .as_ref()
+        .parent()
+        .expect("manifest path has no parent directory")
+        .join(file_path)
+}
+
+// unused
 fn or_default_filename(
     path: Option<impl AsRef<Path>>,
     id: AssetId,

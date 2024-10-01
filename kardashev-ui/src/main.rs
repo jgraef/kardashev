@@ -4,14 +4,12 @@ pub mod app;
 pub mod assets;
 pub mod error;
 pub mod graphics;
+pub mod input;
 pub mod utils;
 pub mod world;
 
 use tracing::Level;
-use tracing_wasm::{
-    WASMLayerConfig,
-    WASMLayerConfigBuilder,
-};
+use tracing_wasm::WASMLayerConfigBuilder;
 use wasm_bindgen::JsCast;
 
 use crate::app::App;

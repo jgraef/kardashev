@@ -11,7 +11,10 @@ pub use self::{
         Plugin,
         RegisterPluginContext,
     },
-    resource::Resources,
+    resource::{
+        Resources,
+        Tick,
+    },
     server::{
         Builder,
         World,

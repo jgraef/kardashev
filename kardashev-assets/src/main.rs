@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod atlas;
 mod processor;
 mod source;
@@ -6,16 +8,23 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::Error;
+use uuid::Uuid;
 
 use crate::processor::Processor;
 
 #[derive(Debug, Parser)]
-pub struct Args {
-    #[arg(long, env = "ASSETS", default_value = "./assets")]
-    assets: PathBuf,
+pub enum Args {
+    Id {
+        #[arg(short, default_value = "1")]
+        n: usize,
+    },
+    Build {
+        #[arg(long, env = "ASSETS", default_value = "./assets")]
+        assets: PathBuf,
 
-    #[arg(long, env = "DIST", default_value = "./assets/dist")]
-    dist: PathBuf,
+        #[arg(long, env = "DIST", default_value = "./assets/dist")]
+        dist: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -25,9 +34,18 @@ async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    let mut processor = Processor::new(&args.dist);
-    processor.process_directory(&args.assets)?;
-    processor.finalize()?;
+    match args {
+        Args::Id { n } => {
+            for _ in 0..n {
+                println!("{}", Uuid::new_v4());
+            }
+        }
+        Args::Build { assets, dist } => {
+            let mut processor = Processor::new(&dist);
+            processor.process_directory(&assets)?;
+            processor.finalize()?;
+        }
+    }
 
     Ok(())
 }

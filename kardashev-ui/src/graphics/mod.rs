@@ -27,6 +27,7 @@ use tokio::sync::{
     oneshot,
     watch,
 };
+use transform::LocalToGlobalTransformSystem;
 use web_sys::HtmlCanvasElement;
 
 use crate::{
@@ -100,12 +101,14 @@ impl Graphics {
         } = rx_result.await.unwrap()?;
 
         let (tx_resize, _) = watch::channel(surface_size);
+        let (tx_visible, _) = watch::channel(true);
 
         Ok(Surface {
             backend,
             surface: Arc::new(surface),
             surface_configuration,
             tx_resize,
+            tx_visible,
         })
     }
 }
@@ -167,7 +170,8 @@ impl Backend {
             .await?;
 
         device.on_uncaptured_error(Box::new(|error| {
-            tracing::error!(%error, "uncaptured error");
+            tracing::error!(%error, "uncaptured wgpu error");
+            panic!("uncaptured wgpu error: {error}");
         }));
 
         static IDS: AtomicUsize = AtomicUsize::new(1);
@@ -386,6 +390,7 @@ pub struct Surface {
     surface: Arc<wgpu::Surface<'static>>,
     surface_configuration: wgpu::SurfaceConfiguration,
     tx_resize: watch::Sender<SurfaceSize>,
+    tx_visible: watch::Sender<bool>,
 }
 
 impl Surface {
@@ -398,9 +403,19 @@ impl Surface {
             .configure(&self.backend.device, &self.surface_configuration);
     }
 
+    pub fn set_visible(&mut self, visible: bool) {
+        let _ = self.tx_visible.send(visible);
+    }
+
     pub fn size_listener(&self) -> SurfaceSizeListener {
         SurfaceSizeListener {
             rx_resize: self.tx_resize.subscribe(),
+        }
+    }
+
+    pub fn visibility_listener(&self) -> SurfaceVisibilityListener {
+        SurfaceVisibilityListener {
+            rx_visible: self.tx_visible.subscribe(),
         }
     }
 
@@ -409,7 +424,7 @@ impl Surface {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SurfaceSizeListener {
     rx_resize: watch::Receiver<SurfaceSize>,
 }
@@ -431,11 +446,25 @@ impl SurfaceSizeListener {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SurfaceVisibilityListener {
+    rx_visible: watch::Receiver<bool>,
+}
+
+impl SurfaceVisibilityListener {
+    pub fn is_visible(&self) -> bool {
+        self.rx_visible.borrow().clone()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
-    fn register(&self, context: RegisterPluginContext) {
+    fn register(self, context: RegisterPluginContext) {
+        context
+            .scheduler
+            .add_update_system(LocalToGlobalTransformSystem);
         context.scheduler.add_render_system(RenderingSystem);
     }
 }
