@@ -2,70 +2,101 @@
 pub mod shape;
 
 use std::{
-    hash::Hash,
+    collections::HashMap,
     sync::Arc,
 };
 
-use kardashev_protocol::assets::AssetId;
-use linear_map::LinearMap;
+use kardashev_client::DownloadError;
+use kardashev_protocol::assets::{
+    self as dist,
+    AssetId,
+};
+pub use kardashev_protocol::assets::{
+    MeshData,
+    PrimitiveTopology,
+    Vertex,
+};
 use wgpu::util::DeviceExt;
 
 use super::{
+    loading::GpuAsset,
     rendering_system::LoadContext,
-    BackendId,
 };
-use crate::{
-    graphics::rendering_system::Vertex,
-    utils::thread_local_cell::ThreadLocalCell,
+use crate::assets::{
+    Asset,
+    AssetNotFound,
+    Loader,
 };
 
 #[derive(Debug)]
 pub struct Mesh {
-    asset_id: Option<AssetId>,
-    data: Option<MeshData>,
-    loaded: LinearMap<BackendId, LoadedMesh>,
+    pub asset_id: Option<AssetId>,
+    pub label: Option<String>,
+    pub mesh_data: Option<Arc<MeshData>>,
 }
 
-impl From<MeshData> for Mesh {
-    fn from(mesh_data: MeshData) -> Self {
-        Mesh {
-            asset_id: None,
-            data: Some(mesh_data),
-            loaded: LinearMap::new(),
+impl Asset for Mesh {
+    type Dist = dist::Mesh;
+    type LoadError = MeshLoadError;
+
+    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
+        for (index, mesh) in manifest.meshes.iter().enumerate() {
+            refs.insert(mesh.id, index);
         }
+    }
+
+    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist> {
+        manifest.meshes.get(index)
+    }
+
+    async fn load<'a>(
+        asset_id: AssetId,
+        loader: &'a mut Loader<'a>,
+    ) -> Result<Self, MeshLoadError> {
+        let metadata = loader.metadata.get::<Self>(asset_id)?;
+
+        let mesh_data = loader
+            .cache
+            .get_or_try_insert_async(asset_id, || {
+                async {
+                    let bytes = loader
+                        .client
+                        .download_file(&metadata.mesh)
+                        .await?
+                        .bytes()
+                        .await?;
+                    let mesh_data: MeshData = rmp_serde::from_slice(&bytes)?;
+                    Ok::<_, MeshLoadError>(Arc::new(mesh_data))
+                }
+            })
+            .await?;
+
+        Ok(Self {
+            asset_id: Some(asset_id),
+            label: metadata.label.clone(),
+            mesh_data: Some(mesh_data),
+        })
     }
 }
 
-impl Mesh {
-    pub(super) fn loaded(&mut self, context: &LoadContext) -> Option<&LoadedMesh> {
-        match self.loaded.entry(context.backend.id()) {
-            linear_map::Entry::Occupied(occupied) => Some(occupied.into_mut()),
-            linear_map::Entry::Vacant(vacant) => {
-                tracing::debug!(asset_id = ?self.asset_id, backend_id = ?context.backend.id(), "loading mesh to gpu");
-                let mesh_data = self.data.as_ref()?;
-                let loaded = mesh_data.load(context);
-                Some(vacant.insert(loaded))
-            }
-        }
-    }
-}
+impl GpuAsset for Mesh {
+    type Loaded = LoadedMesh;
 
-#[derive(Clone, Debug)]
-pub struct MeshData {
-    pub primitive_topology: PrimitiveTopology,
-    pub indices: Vec<u16>,
-    pub vertices: Vec<Vertex>,
-}
+    fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
+        // todo: don't unwrap, but return an error
+        let mesh_data = self.mesh_data.as_ref().unwrap();
 
-impl MeshData {
-    fn load(&self, context: &LoadContext) -> LoadedMesh {
         let vertex_buffer =
             context
                 .backend
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&self.vertices),
+                    label: self
+                        .label
+                        .as_ref()
+                        .map(|l| format!("vertex buffer: {l}"))
+                        .as_deref(),
+                    contents: bytemuck::cast_slice(&mesh_data.vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 });
 
@@ -74,52 +105,77 @@ impl MeshData {
                 .backend
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Index Buffer"),
-                    contents: bytemuck::cast_slice(&self.indices),
+                    label: self
+                        .label
+                        .as_ref()
+                        .map(|l| format!("index buffer: {l}"))
+                        .as_deref(),
+                    contents: bytemuck::cast_slice(&mesh_data.indices),
                     usage: wgpu::BufferUsages::INDEX,
                 });
 
-        LoadedMesh {
-            id: LoadedMeshId(index_buffer.global_id()),
-            buffers: Arc::new(ThreadLocalCell::new(LoadedMeshBuffers {
-                vertex_buffer,
-                index_buffer,
-                num_indices: self.indices.len() as u32,
-            })),
+        Ok(LoadedMesh {
+            vertex_buffer,
+            index_buffer,
+            num_indices: mesh_data.indices.len().try_into().unwrap(),
+        })
+    }
+}
+
+impl From<MeshData> for Mesh {
+    fn from(mesh_data: MeshData) -> Self {
+        Mesh {
+            asset_id: None,
+            label: None,
+            mesh_data: Some(Arc::new(mesh_data)),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PrimitiveTopology {
-    PointList,
-    LineList,
-    LineStrip,
-    TriangleList,
-    TriangleStrip,
-}
-
-#[derive(Clone, Debug)]
-pub struct LoadedMesh {
-    id: LoadedMeshId,
-    buffers: Arc<ThreadLocalCell<LoadedMeshBuffers>>,
+#[derive(Debug, thiserror::Error)]
+#[error("mesh load error")]
+pub enum MeshLoadError {
+    AssetNotFound(#[from] AssetNotFound),
+    Download(#[from] DownloadError),
+    Decode(#[from] rmp_serde::decode::Error),
 }
 
 impl LoadedMesh {
-    pub fn id(&self) -> LoadedMeshId {
-        self.id
-    }
+    pub fn from_mesh_data(
+        mesh_data: &MeshData,
+        context: &LoadContext,
+        label: Option<&str>,
+    ) -> Self {
+        let vertex_buffer =
+            context
+                .backend
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: label.map(|l| format!("vertex buffer: {l}")).as_deref(),
+                    contents: bytemuck::cast_slice(&mesh_data.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
 
-    pub fn buffers(&self) -> &LoadedMeshBuffers {
-        self.buffers.get()
+        let index_buffer =
+            context
+                .backend
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: label.map(|l| format!("index buffer: {l}")).as_deref(),
+                    contents: bytemuck::cast_slice(&mesh_data.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+        LoadedMesh {
+            vertex_buffer,
+            index_buffer,
+            num_indices: mesh_data.indices.len().try_into().unwrap(),
+        }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LoadedMeshId(wgpu::Id<wgpu::Buffer>);
-
 #[derive(Debug)]
-pub struct LoadedMeshBuffers {
+pub struct LoadedMesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub num_indices: u32,

@@ -19,11 +19,6 @@ use image::{
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
-    CompiledShader,
-};
-use serde::{
-    Deserialize,
-    Serialize,
 };
 use walkdir::WalkDir;
 
@@ -50,12 +45,14 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub fn new(dist: impl AsRef<Path>) -> Self {
-        Self {
-            dist_path: dist.as_ref().to_owned(),
+    pub fn new(dist_path: impl AsRef<Path>) -> Result<Self, Error> {
+        let dist_path = dist_path.as_ref();
+        std::fs::create_dir_all(dist_path)?;
+        Ok(Self {
+            dist_path: dist_path.to_owned(),
             dist_manifest: dist::Manifest::default(),
             atlas_builders: HashMap::new(),
-        }
+        })
     }
 
     pub fn process_directory(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
@@ -253,16 +250,22 @@ impl Process for Shader {
 
         match validator.validate(&module) {
             Ok(module_info) => {
-                let compiled = CompiledShader {
+                let compiled = dist::CompiledShader {
                     label: self.label.clone(),
                     module,
                     module_info,
                 };
-                let filename = format!("{id}.dat");
+                let filename = format!("{id}.naga");
                 let path = processor.dist_path.join(&filename);
                 let mut writer = BufWriter::new(File::create(&path)?);
                 //serde_json::to_writer_pretty(writer, &compiled)?;
                 rmp_serde::encode::write(&mut writer, &compiled)?;
+
+                processor.dist_manifest.shaders.push(dist::Shader {
+                    id,
+                    label: self.label.clone(),
+                    naga_ir: filename,
+                });
             }
             Err(error) => {
                 error.emit_to_stderr_with_path(&source, &path.to_string_lossy());

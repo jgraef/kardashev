@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod loading;
 pub mod material;
 pub mod mesh;
 pub mod model;
@@ -7,6 +8,8 @@ pub mod texture;
 pub mod transform;
 
 use std::{
+    fmt::Debug,
+    hash::Hash,
     num::{
         NonZeroU32,
         NonZeroUsize,
@@ -21,7 +24,11 @@ use std::{
     },
 };
 
-use rendering_system::RenderingSystem;
+use linear_map::LinearMap;
+use rendering_system::{
+    LoadContext,
+    RenderingSystem,
+};
 use tokio::sync::{
     mpsc,
     oneshot,
@@ -31,7 +38,10 @@ use transform::LocalToGlobalTransformSystem;
 use web_sys::HtmlCanvasElement;
 
 use crate::{
-    utils::spawn_local_and_handle_error,
+    utils::{
+        spawn_local_and_handle_error,
+        thread_local_cell::ThreadLocalCell,
+    },
     world::{
         Plugin,
         RegisterPluginContext,

@@ -17,3 +17,4 @@ thiserror = "1.0.60"
 uuid = { version = "1.9.1", features = ["serde"] }
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut", "from", "into"] }
 naga = { version = "22.1.0", features = ["serialize", "deserialize"] }
+bytemuck = { version = "1.18.0", features = ["derive"] }

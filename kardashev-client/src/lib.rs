@@ -5,7 +5,12 @@ use url::Url;
 
 pub use crate::{
     api::ApiClient,
-    assets::AssetClient,
+    assets::{
+        AssetClient,
+        DownloadError,
+        DownloadFile,
+        Events,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]

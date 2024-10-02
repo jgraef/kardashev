@@ -1,11 +1,12 @@
+use kardashev_protocol::assets::{
+    PrimitiveTopology,
+    Vertex,
+};
+
 use super::{
     MeshBuilder,
     MeshData,
     Meshable,
-};
-use crate::graphics::{
-    mesh::PrimitiveTopology,
-    rendering_system::Vertex,
 };
 
 #[derive(Clone, Copy, Debug)]

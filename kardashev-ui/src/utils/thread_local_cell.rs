@@ -1,21 +1,18 @@
-use std::{
-    mem::ManuallyDrop,
-    thread::{
-        self,
-        ThreadId,
-    },
+use std::thread::{
+    self,
+    ThreadId,
 };
 
 #[derive(Debug)]
 pub struct ThreadLocalCell<T> {
-    inner: ManuallyDrop<T>,
+    inner: T,
     created_on: ThreadId,
 }
 
 impl<T> ThreadLocalCell<T> {
     pub fn new(inner: T) -> Self {
         Self {
-            inner: ManuallyDrop::new(inner),
+            inner,
             created_on: thread::current().id(),
         }
     }

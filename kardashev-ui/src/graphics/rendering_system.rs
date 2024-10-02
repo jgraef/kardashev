@@ -8,6 +8,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use kardashev_protocol::assets::Vertex;
 use nalgebra::Matrix4;
 use palette::{
     Srgba,
@@ -20,6 +21,10 @@ use super::{
         Camera,
         ClearColor,
     },
+    loading::{
+        BackendResource,
+        BackendResourceId,
+    },
     material::{
         LoadedMaterial,
         LoadedMaterialId,
@@ -27,7 +32,6 @@ use super::{
     },
     mesh::{
         LoadedMesh,
-        LoadedMeshId,
         Mesh,
     },
     texture::Texture,
@@ -40,6 +44,7 @@ use super::{
 };
 use crate::{
     error::Error,
+    graphics::loading::OnGpu,
     utils::thread_local_cell::ThreadLocalCell,
     world::{
         Label,
@@ -140,16 +145,20 @@ impl System for RenderingSystem {
 
             tracing::trace!("batching");
 
-            let mut render_entities = context
-                .world
-                .query::<(&GlobalTransform, &mut Mesh, &mut Material)>();
+            let mut render_entities =
+                context
+                    .world
+                    .query::<(&GlobalTransform, &Mesh, &mut OnGpu<Mesh>, &mut Material)>();
 
-            for (_entity, (transform, mesh, material)) in render_entities.iter() {
+            for (_entity, (transform, mesh, mesh_gpu, material)) in render_entities.iter() {
                 let load_context = render_target.load_context();
 
-                let Some(mesh) = mesh.loaded(&load_context)
-                else {
-                    continue;
+                let mesh = match mesh_gpu.get(&mesh, &load_context) {
+                    Ok(mesh) => mesh,
+                    Err(error) => {
+                        tracing::error!(asset_id = ?mesh.asset_id, ?error, "error while loading mesh");
+                        continue;
+                    }
                 };
 
                 let Some(material) = material.loaded(&load_context)
@@ -416,15 +425,11 @@ pub struct LoadContext<'a> {
     pub pipeline: &'a Pipeline,
 }
 
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-#[repr(C)]
-pub struct Vertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub tex_coords: [f32; 2],
+trait HasVertexBufferLayout {
+    fn layout() -> wgpu::VertexBufferLayout<'static>;
 }
 
-impl Vertex {
+impl HasVertexBufferLayout for Vertex {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
@@ -588,7 +593,7 @@ impl DepthTexture {
 pub struct DrawBatcher {
     instance_buffer: wgpu::Buffer,
     instance_buffer_size: usize,
-    entries: HashMap<(LoadedMeshId, LoadedMaterialId), DrawBatchEntry>,
+    entries: HashMap<DrawBatchKey, DrawBatchEntry>,
     reuse_instance_vecs: Vec<Vec<Instance>>,
     instances: Vec<Instance>,
     batches: Vec<DrawBatch>,
@@ -656,24 +661,29 @@ impl DrawBatcher {
         for batch in self.batches.drain(..) {
             tracing::trace!(?batch.range, "drawing batch");
 
-            let mesh_buffers = batch.mesh.buffers();
+            let mesh = batch.mesh.get();
             let material_bind_group = batch.material.bind_group();
 
-            render_pass.set_vertex_buffer(0, mesh_buffers.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(
-                mesh_buffers.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint16,
-            );
+            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.set_bind_group(0, material_bind_group, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
-            render_pass.draw_indexed(0..mesh_buffers.num_indices as u32, 0, batch.range);
+            render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
         }
     }
 
-    pub fn push(&mut self, mesh: &LoadedMesh, material: &LoadedMaterial, instance: Instance) {
+    pub fn push(
+        &mut self,
+        mesh: &BackendResource<LoadedMesh>,
+        material: &LoadedMaterial,
+        instance: Instance,
+    ) {
         self.entries
-            .entry((mesh.id(), material.id()))
+            .entry(DrawBatchKey {
+                mesh_id: mesh.id(),
+                material_id: material.id(),
+            })
             .or_insert_with(|| {
                 DrawBatchEntry {
                     instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
@@ -686,17 +696,23 @@ impl DrawBatcher {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct DrawBatchKey {
+    mesh_id: BackendResourceId<LoadedMesh>,
+    material_id: LoadedMaterialId,
+}
+
 #[derive(Debug)]
 struct DrawBatchEntry {
     instances: Vec<Instance>,
-    mesh: LoadedMesh,
+    mesh: BackendResource<LoadedMesh>,
     material: LoadedMaterial,
 }
 
 #[derive(Debug)]
 struct DrawBatch {
     range: Range<u32>,
-    mesh: LoadedMesh,
+    mesh: BackendResource<LoadedMesh>,
     material: LoadedMaterial,
 }
 

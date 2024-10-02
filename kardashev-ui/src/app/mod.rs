@@ -26,7 +26,10 @@ use url::Url;
 use self::map::Map;
 use crate::{
     app::components::dock::Dock,
-    assets::load_image,
+    assets::{
+        load_image,
+        AssetServer,
+    },
     error::Error,
     graphics::{
         material::Material,
@@ -70,8 +73,12 @@ impl Default for Urls {
 
 #[component]
 pub fn App() -> impl IntoView {
+    let urls = Urls::default();
+    tracing::info!(?urls, "endpoints");
+
     provide_meta_context();
-    provide_client();
+    provide_client(urls.api_url);
+    provide_asset_server(urls.asset_url);
     provide_graphics();
     provide_world();
 
@@ -98,22 +105,24 @@ pub fn App() -> impl IntoView {
     }
 }
 
-fn provide_client() {
-    let urls = Urls::default();
-    tracing::info!(?urls, "endpoints");
-    let api_client = ApiClient::new(urls.api_url);
-    let asset_client = AssetClient::new(urls.asset_url);
+fn provide_client(api_url: Url) {
+    let api_client = ApiClient::new(api_url);
     provide_context(api_client);
-    provide_context(asset_client);
+}
+
+fn provide_asset_server(asset_url: Url) {
+    let asset_client = AssetClient::new(asset_url);
+    let asset_server = AssetServer::builder().with_client(asset_client).build();
+    provide_context(asset_server);
 }
 
 fn provide_world() {
     let api_client = expect_context::<ApiClient>();
-    let asset_client = expect_context::<AssetClient>();
+    let asset_server = expect_context::<AssetServer>();
 
     tracing::debug!("creating world");
     let world = World::builder()
-        .with_resource(asset_client)
+        .with_resource(asset_server)
         .with_resource(api_client)
         .with_plugin(InputPlugin::default())
         .with_plugin(RenderPlugin)

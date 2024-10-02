@@ -41,7 +41,7 @@ async fn main() -> Result<(), Error> {
             }
         }
         Args::Build { assets, dist } => {
-            let mut processor = Processor::new(&dist);
+            let mut processor = Processor::new(&dist)?;
             processor.process_directory(&assets)?;
             processor.finalize()?;
         }

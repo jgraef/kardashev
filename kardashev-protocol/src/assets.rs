@@ -1,5 +1,9 @@
 use std::fmt::Display;
 
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -25,7 +29,10 @@ pub struct Manifest {
     pub materials: Vec<Material>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mesh: Vec<Mesh>,
+    pub meshes: Vec<Mesh>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shaders: Vec<Shader>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,7 +116,17 @@ pub struct Mesh {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
-    Reload { asset_id: AssetId },
+    Changed { asset_id: AssetId },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Shader {
+    pub id: AssetId,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+
+    pub naga_ir: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,4 +134,28 @@ pub struct CompiledShader {
     pub label: Option<String>,
     pub module: naga::Module,
     pub module_info: naga::valid::ModuleInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MeshData {
+    pub primitive_topology: PrimitiveTopology,
+    pub indices: Vec<u16>,
+    pub vertices: Vec<Vertex>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PrimitiveTopology {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+}
+
+#[derive(Clone, Copy, Debug, Zeroable, Pod, Serialize, Deserialize)]
+#[repr(C)]
+pub struct Vertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub tex_coords: [f32; 2],
 }
