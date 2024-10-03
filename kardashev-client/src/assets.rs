@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
+use bytes::{
+    Bytes,
+    BytesMut,
+};
 use futures_util::TryStreamExt;
 use kardashev_protocol::assets::{
     Manifest,
@@ -10,6 +13,7 @@ use reqwest_websocket::{
     RequestBuilderExt,
     WebSocket,
 };
+use tokio::sync::watch;
 use url::Url;
 
 use crate::{
@@ -58,6 +62,7 @@ impl AssetClient {
 
     pub async fn download_file(&self, url: &str) -> Result<DownloadFile, DownloadError> {
         let url = self.asset_url.join(url).expect("invalid url");
+        tracing::debug!(%url, "downloading file");
 
         let err = |e| {
             DownloadError {
@@ -74,7 +79,22 @@ impl AssetClient {
             .map_err(err)?
             .error_for_status()
             .map_err(err)?;
-        Ok(DownloadFile { url, response })
+
+        let content_length = response
+            .content_length()
+            .and_then(|content_length| usize::try_from(content_length).ok());
+
+        let (tx_progress, _rx_progress) = watch::channel(DownloadProgress {
+            total: content_length,
+            received: 0,
+        });
+
+        Ok(DownloadFile {
+            url,
+            response,
+            tx_progress,
+            content_length,
+        })
     }
 }
 
@@ -98,16 +118,38 @@ impl Events {
 pub struct DownloadFile {
     url: Url,
     response: reqwest::Response,
+    tx_progress: watch::Sender<DownloadProgress>,
+    content_length: Option<usize>,
 }
 
 impl DownloadFile {
+    pub fn progress(&self) -> watch::Receiver<DownloadProgress> {
+        self.tx_progress.subscribe()
+    }
+
     pub async fn bytes(self) -> Result<Bytes, DownloadError> {
-        Ok(self.response.bytes().await.map_err(|e| {
+        let mut buf = self
+            .content_length
+            .map(|content_length| BytesMut::with_capacity(content_length))
+            .unwrap_or_else(|| BytesMut::new());
+
+        let mut stream = self.response.bytes_stream();
+
+        while let Some(chunk) = stream.try_next().await.map_err(|reason| {
             DownloadError {
                 url: self.url.clone(),
-                reason: e,
+                reason,
             }
-        })?)
+        })? {
+            self.tx_progress.send_modify(|progress| {
+                progress.received += chunk.len();
+            });
+
+            // can we avoid copying here?
+            buf.extend_from_slice(&chunk);
+        }
+
+        Ok(buf.freeze())
     }
 }
 
@@ -117,4 +159,10 @@ pub struct DownloadError {
     pub url: Url,
     #[source]
     pub reason: reqwest::Error,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct DownloadProgress {
+    pub total: Option<usize>,
+    pub received: usize,
 }

@@ -2,10 +2,7 @@ mod components;
 mod map;
 
 use components::window::provide_graphics;
-use kardashev_client::{
-    ApiClient,
-    AssetClient,
-};
+use kardashev_client::ApiClient;
 use leptos::{
     component,
     expect_context,
@@ -27,8 +24,8 @@ use self::map::Map;
 use crate::{
     app::components::dock::Dock,
     assets::{
-        load_image,
-        AssetServer,
+        image_load::load_image,
+        AssetsPlugin,
     },
     error::Error,
     graphics::{
@@ -78,9 +75,8 @@ pub fn App() -> impl IntoView {
 
     provide_meta_context();
     provide_client(urls.api_url);
-    provide_asset_server(urls.asset_url);
     provide_graphics();
-    provide_world();
+    provide_world(urls.asset_url);
 
     /*let (log_level, _, _) = use_local_storage::<Option<tracing::Level>, OptionCodec<FromToStringCodec>>("log-level");
     create_effect(move |_| {
@@ -110,20 +106,13 @@ fn provide_client(api_url: Url) {
     provide_context(api_client);
 }
 
-fn provide_asset_server(asset_url: Url) {
-    let asset_client = AssetClient::new(asset_url);
-    let asset_server = AssetServer::builder().with_client(asset_client).build();
-    provide_context(asset_server);
-}
-
-fn provide_world() {
+fn provide_world(asset_url: Url) {
     let api_client = expect_context::<ApiClient>();
-    let asset_server = expect_context::<AssetServer>();
 
     tracing::debug!("creating world");
     let world = World::builder()
-        .with_resource(asset_server)
         .with_resource(api_client)
+        .with_plugin(AssetsPlugin::from_url(asset_url))
         .with_plugin(InputPlugin::default())
         .with_plugin(RenderPlugin)
         .with_startup_system({
@@ -149,7 +138,7 @@ fn provide_world() {
                             .await
                             .unwrap();
                     let mesh = Mesh::from(shape::Sphere::default().mesh().build());
-                    let material = Material::from_diffuse_image(star_texture.clone());
+                    let material = Material::from_diffuse(star_texture);
 
                     context.world.spawn((
                         Transform {

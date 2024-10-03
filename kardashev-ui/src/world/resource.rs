@@ -22,6 +22,14 @@ impl Resources {
             .map(|resource| resource.downcast_ref().unwrap())
     }
 
+    pub fn get_mut_or_insert_default<R: Default + 'static>(&mut self) -> &mut R {
+        self.resources
+            .entry(TypeId::of::<R>())
+            .or_insert_with(|| Box::new(R::default()))
+            .downcast_mut()
+            .unwrap()
+    }
+
     pub fn get_mut<R: 'static>(&mut self) -> Option<&mut R> {
         self.resources
             .get_mut(&TypeId::of::<R>())

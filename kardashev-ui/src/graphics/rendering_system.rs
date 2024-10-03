@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    ops::Range,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use bytemuck::{
     Pod,
@@ -21,20 +17,9 @@ use super::{
         Camera,
         ClearColor,
     },
-    loading::{
-        BackendResource,
-        BackendResourceId,
-    },
-    material::{
-        LoadedMaterial,
-        LoadedMaterialId,
-        Material,
-    },
-    mesh::{
-        LoadedMesh,
-        Mesh,
-    },
-    texture::Texture,
+    draw_batch::DrawBatcher,
+    material::Material,
+    mesh::Mesh,
     transform::GlobalTransform,
     Backend,
     Surface,
@@ -44,7 +29,10 @@ use super::{
 };
 use crate::{
     error::Error,
-    graphics::loading::OnGpu,
+    graphics::{
+        loading::OnGpu,
+        texture::LoadedTexture,
+    },
     utils::thread_local_cell::ThreadLocalCell,
     world::{
         Label,
@@ -148,20 +136,16 @@ impl System for RenderingSystem {
             let mut render_entities =
                 context
                     .world
-                    .query::<(&GlobalTransform, &Mesh, &mut OnGpu<Mesh>, &mut Material)>();
+                    .query::<(&GlobalTransform, &OnGpu<Mesh>, &OnGpu<Material>)>();
 
-            for (_entity, (transform, mesh, mesh_gpu, material)) in render_entities.iter() {
-                let load_context = render_target.load_context();
+            for (entity, (transform, mesh, material)) in render_entities.iter() {
+                tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
 
-                let mesh = match mesh_gpu.get(&mesh, &load_context) {
-                    Ok(mesh) => mesh,
-                    Err(error) => {
-                        tracing::error!(asset_id = ?mesh.asset_id, ?error, "error while loading mesh");
-                        continue;
-                    }
+                let Some(mesh) = mesh.get(render_target.backend.id())
+                else {
+                    continue;
                 };
-
-                let Some(material) = material.loaded(&load_context)
+                let Some(material) = material.get(render_target.backend.id())
                 else {
                     continue;
                 };
@@ -196,7 +180,7 @@ pub struct Pipeline {
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub default_sampler: Arc<wgpu::Sampler>,
-    pub fallback_texture: Texture,
+    pub fallback_texture: LoadedTexture,
 }
 
 impl Pipeline {
@@ -324,7 +308,7 @@ impl Pipeline {
             ..Default::default()
         }));
 
-        let fallback_texture = Texture::color1x1(
+        let fallback_texture = LoadedTexture::color1x1(
             palette::named::BLACK.with_alpha(0),
             default_sampler.clone(),
             &surface.backend,
@@ -343,7 +327,7 @@ impl Pipeline {
 
 #[derive(Debug)]
 pub struct RenderTarget {
-    inner: ThreadLocalCell<RenderTargetInner>,
+    pub(super) inner: ThreadLocalCell<RenderTargetInner>,
 }
 
 impl RenderTarget {
@@ -394,7 +378,7 @@ impl RenderTarget {
 }
 
 #[derive(Debug)]
-struct RenderTargetInner {
+pub(super) struct RenderTargetInner {
     pub surface: Arc<wgpu::Surface<'static>>,
     pub surface_size_listener: SurfaceSizeListener,
     pub surface_visibility_listener: SurfaceVisibilityListener,
@@ -407,22 +391,9 @@ struct RenderTargetInner {
 }
 
 impl RenderTargetInner {
-    pub fn load_context(&self) -> LoadContext {
-        LoadContext {
-            backend: &self.backend,
-            pipeline: &self.pipeline,
-        }
-    }
-
     pub fn is_visible(&self) -> bool {
         self.surface_visibility_listener.is_visible()
     }
-}
-
-#[derive(Debug)]
-pub struct LoadContext<'a> {
-    pub backend: &'a Backend,
-    pub pipeline: &'a Pipeline,
 }
 
 trait HasVertexBufferLayout {
@@ -472,7 +443,9 @@ impl Instance {
                 .unwrap(),
         }
     }
+}
 
+impl HasVertexBufferLayout for Instance {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
@@ -587,144 +560,6 @@ impl DepthTexture {
             texture_view,
         }
     }
-}
-
-#[derive(Debug)]
-pub struct DrawBatcher {
-    instance_buffer: wgpu::Buffer,
-    instance_buffer_size: usize,
-    entries: HashMap<DrawBatchKey, DrawBatchEntry>,
-    reuse_instance_vecs: Vec<Vec<Instance>>,
-    instances: Vec<Instance>,
-    batches: Vec<DrawBatch>,
-}
-
-impl DrawBatcher {
-    const INITIAL_BUFFER_SIZE: usize = 1024;
-
-    pub fn new(backend: &Backend) -> Self {
-        let instance_buffer = create_instance_buffer(backend, Self::INITIAL_BUFFER_SIZE);
-
-        Self {
-            instance_buffer,
-            instance_buffer_size: Self::INITIAL_BUFFER_SIZE,
-            entries: HashMap::with_capacity(Self::INITIAL_BUFFER_SIZE),
-            reuse_instance_vecs: vec![],
-            instances: Vec::with_capacity(Self::INITIAL_BUFFER_SIZE),
-            batches: vec![],
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        backend: &Backend,
-        camera_bind_group: &wgpu::BindGroup,
-        render_pass: &mut wgpu::RenderPass,
-    ) {
-        // create instance list
-        for (_, mut entry) in self.entries.drain() {
-            let start_index = self.instances.len() as u32;
-            self.instances.extend(entry.instances.drain(..));
-            let end_index = self.instances.len() as u32;
-
-            self.batches.push(DrawBatch {
-                range: start_index..end_index,
-                mesh: entry.mesh,
-                material: entry.material,
-            });
-
-            self.reuse_instance_vecs.push(entry.instances);
-        }
-
-        tracing::trace!(
-            num_instances = self.instances.len(),
-            num_batches = self.batches.len(),
-            "drawing batched"
-        );
-
-        // resize buffer if needed
-        if self.instances.len() > self.instance_buffer_size {
-            let new_size = self.instances.len().max(self.instance_buffer_size * 2);
-            self.instance_buffer = create_instance_buffer(backend, new_size);
-            self.instance_buffer_size = new_size;
-        }
-
-        // write instance data to gpu
-        backend.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
-        self.instances.clear();
-
-        // render batches
-        for batch in self.batches.drain(..) {
-            tracing::trace!(?batch.range, "drawing batch");
-
-            let mesh = batch.mesh.get();
-            let material_bind_group = batch.material.bind_group();
-
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_bind_group(0, material_bind_group, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
-            render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
-        }
-    }
-
-    pub fn push(
-        &mut self,
-        mesh: &BackendResource<LoadedMesh>,
-        material: &LoadedMaterial,
-        instance: Instance,
-    ) {
-        self.entries
-            .entry(DrawBatchKey {
-                mesh_id: mesh.id(),
-                material_id: material.id(),
-            })
-            .or_insert_with(|| {
-                DrawBatchEntry {
-                    instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
-                    mesh: mesh.clone(),
-                    material: material.clone(),
-                }
-            })
-            .instances
-            .push(instance);
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-struct DrawBatchKey {
-    mesh_id: BackendResourceId<LoadedMesh>,
-    material_id: LoadedMaterialId,
-}
-
-#[derive(Debug)]
-struct DrawBatchEntry {
-    instances: Vec<Instance>,
-    mesh: BackendResource<LoadedMesh>,
-    material: LoadedMaterial,
-}
-
-#[derive(Debug)]
-struct DrawBatch {
-    range: Range<u32>,
-    mesh: BackendResource<LoadedMesh>,
-    material: LoadedMaterial,
-}
-
-fn create_instance_buffer(backend: &Backend, size: usize) -> wgpu::Buffer {
-    tracing::debug!(size, "allocating instance buffer");
-
-    backend.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("instance buffer"),
-        size: (size * std::mem::size_of::<Instance>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }
 
 fn convert_color_palette_to_wgpu(color: Srgba<f64>) -> wgpu::Color {

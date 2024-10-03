@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod draw_batch;
 pub mod loading;
 pub mod material;
 pub mod mesh;
@@ -24,11 +25,7 @@ use std::{
     },
 };
 
-use linear_map::LinearMap;
-use rendering_system::{
-    LoadContext,
-    RenderingSystem,
-};
+use loading::GpuLoadingSystem;
 use tokio::sync::{
     mpsc,
     oneshot,
@@ -38,10 +35,14 @@ use transform::LocalToGlobalTransformSystem;
 use web_sys::HtmlCanvasElement;
 
 use crate::{
-    utils::{
-        spawn_local_and_handle_error,
-        thread_local_cell::ThreadLocalCell,
+    assets::AssetTypeRegistry,
+    graphics::{
+        material::Material,
+        mesh::Mesh,
+        rendering_system::RenderingSystem,
+        texture::Texture,
     },
+    utils::spawn_local_and_handle_error,
     world::{
         Plugin,
         RegisterPluginContext,
@@ -472,9 +473,22 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn register(self, context: RegisterPluginContext) {
+        if let Some(asset_type_registry) = context.resources.get_mut::<AssetTypeRegistry>() {
+            asset_type_registry
+                .register::<Texture>()
+                .register::<Mesh>()
+                .register::<Material>();
+        }
+        else {
+            tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");
+        }
+
         context
             .scheduler
             .add_update_system(LocalToGlobalTransformSystem);
+        context
+            .scheduler
+            .add_render_system(GpuLoadingSystem::default());
         context.scheduler.add_render_system(RenderingSystem);
     }
 }

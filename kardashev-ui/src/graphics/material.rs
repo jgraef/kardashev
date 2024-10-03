@@ -1,101 +1,139 @@
 use std::{
-    hash::Hash,
+    collections::HashMap,
     sync::Arc,
 };
 
-use image::RgbaImage;
-use kardashev_protocol::assets::AssetId;
-use linear_map::LinearMap;
+use kardashev_protocol::assets::{
+    self as dist,
+    AssetId,
+};
 
 use super::{
-    rendering_system::LoadContext,
+    loading::{
+        GpuAsset,
+        LoadContext,
+    },
     texture::Texture,
-    BackendId,
 };
-use crate::utils::thread_local_cell::ThreadLocalCell;
+use crate::{
+    assets::{
+        Asset,
+        AssetNotFound,
+        Loader,
+    },
+    graphics::texture::{
+        LoadTextureError,
+        LoadedTexture,
+    },
+};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Material {
-    asset_id: Option<AssetId>,
-    data: Option<MaterialData>,
-    loaded: LinearMap<BackendId, LoadedMaterial>,
+    pub asset_id: Option<AssetId>,
+    pub material_data: Option<Arc<MaterialData>>,
 }
 
 impl Material {
-    pub(super) fn loaded(&mut self, context: &LoadContext) -> Option<&LoadedMaterial> {
-        match self.loaded.entry(context.backend.id()) {
-            linear_map::Entry::Occupied(occupied) => Some(occupied.into_mut()),
-            linear_map::Entry::Vacant(vacant) => {
-                tracing::debug!(asset_id = ?self.asset_id, backend_id = ?context.backend.id(), "loading material to gpu");
-                let material_data = self.data.as_ref()?;
-                let loaded = material_data.load(context);
-                Some(vacant.insert(loaded))
-            }
-        }
-    }
-
-    pub fn from_diffuse_image(diffuse: impl Into<Arc<RgbaImage>>) -> Self {
+    pub fn from_diffuse(diffuse: impl Into<Texture>) -> Self {
         Self {
             asset_id: None,
-            data: Some(MaterialData {
+            material_data: Some(Arc::new(MaterialData {
                 diffuse: Some(diffuse.into()),
                 ..Default::default()
-            }),
-            loaded: LinearMap::new(),
+            })),
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct LoadedMaterial {
-    id: LoadedMaterialId,
-    bind_group: Arc<ThreadLocalCell<wgpu::BindGroup>>,
-}
+impl Asset for Material {
+    type Dist = dist::Material;
+    type LoadError = LoadMaterialError;
 
-impl LoadedMaterial {
-    pub fn id(&self) -> LoadedMaterialId {
-        self.id
+    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
+        for (index, material) in manifest.materials.iter().enumerate() {
+            refs.insert(material.id, index);
+        }
     }
 
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        self.bind_group.get()
+    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist> {
+        manifest.materials.get(index)
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LoadedMaterialId(wgpu::Id<wgpu::BindGroup>);
+    async fn load<'a, 'b: 'a>(
+        asset_id: AssetId,
+        loader: &'a mut Loader<'b>,
+    ) -> Result<Self, Self::LoadError> {
+        // we don't use the cache for materials, since the textures are cached anyway
 
-#[derive(Debug, Default)]
-struct MaterialData {
-    ambient: Option<Arc<RgbaImage>>,
-    diffuse: Option<Arc<RgbaImage>>,
-    specular: Option<Arc<RgbaImage>>,
-    normal: Option<Arc<RgbaImage>>,
-    shininess: Option<Arc<RgbaImage>>,
-    dissolve: Option<Arc<RgbaImage>>,
-}
+        // we clone here, since we can't keep the borrow into Loader. we could also
+        // construct a new Loader with reborrows.
+        let metadata = loader.metadata.get::<Self>(asset_id)?;
 
-impl MaterialData {
-    pub fn load(&self, context: &LoadContext) -> LoadedMaterial {
-        let load_texture = |image: &RgbaImage| -> Texture {
-            Texture::load(
-                image,
-                context.pipeline.default_sampler.clone(),
-                &context.backend,
-            )
+        async fn load_material_texture<'a, 'b: 'a>(
+            asset_id: Option<AssetId>,
+            loader: &'a mut Loader<'b>,
+        ) -> Result<Option<Texture>, LoadTextureError> {
+            if let Some(asset_id) = asset_id {
+                Ok(Some(<Texture as Asset>::load(asset_id, loader).await?))
+            }
+            else {
+                Ok(None)
+            }
+        }
+
+        let mut loader = Loader {
+            metadata: &loader.metadata,
+            client: &loader.client,
+            cache: &mut loader.cache,
         };
 
-        let ambient = self.ambient.as_deref().map(load_texture);
-        let diffuse = self.diffuse.as_deref().map(load_texture);
-        let specular = self.specular.as_deref().map(load_texture);
-        let normal = self.normal.as_deref().map(load_texture);
-        let shininess = self.shininess.as_deref().map(load_texture);
-        let dissolve = self.dissolve.as_deref().map(load_texture);
+        let ambient = load_material_texture(metadata.ambient, &mut loader).await?;
+        let diffuse = load_material_texture(metadata.diffuse, &mut loader).await?;
+        let specular = load_material_texture(metadata.specular, &mut loader).await?;
+        let normal = load_material_texture(metadata.normal, &mut loader).await?;
+        let shininess = load_material_texture(metadata.shininess, &mut loader).await?;
+        let dissolve = load_material_texture(metadata.dissolve, &mut loader).await?;
+
+        let material_data = MaterialData {
+            ambient,
+            diffuse,
+            specular,
+            normal,
+            shininess,
+            dissolve,
+        };
+
+        Ok(Self {
+            asset_id: Some(asset_id),
+            material_data: Some(Arc::new(material_data)),
+        })
+    }
+}
+
+impl GpuAsset for Material {
+    type Loaded = LoadedMaterial;
+
+    fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
+        let load_texture =
+            |texture: &Option<Texture>| -> Result<Option<LoadedTexture>, super::Error> {
+                texture
+                    .as_ref()
+                    .map(|texture| <Texture as GpuAsset>::load(texture, context))
+                    .transpose()
+            };
+
+        let material_data = self.material_data.as_ref().unwrap();
+        let ambient = load_texture(&material_data.ambient)?;
+        let diffuse = load_texture(&material_data.diffuse)?;
+        let specular = load_texture(&material_data.specular)?;
+        let normal = load_texture(&material_data.normal)?;
+        let shininess = load_texture(&material_data.shininess)?;
+        let dissolve = load_texture(&material_data.dissolve)?;
 
         fn texture_view_bind_group_entry<'a>(
             binding: u32,
-            texture: &'a Option<Texture>,
-            fallback: &'a Texture,
+            texture: &'a Option<LoadedTexture>,
+            fallback: &'a LoadedTexture,
         ) -> wgpu::BindGroupEntry<'a> {
             wgpu::BindGroupEntry {
                 binding,
@@ -110,8 +148,8 @@ impl MaterialData {
 
         fn texture_sampler_bind_group_entry<'a>(
             binding: u32,
-            texture: &'a Option<Texture>,
-            fallback: &'a Texture,
+            texture: &'a Option<LoadedTexture>,
+            fallback: &'a LoadedTexture,
         ) -> wgpu::BindGroupEntry<'a> {
             wgpu::BindGroupEntry {
                 binding,
@@ -178,9 +216,28 @@ impl MaterialData {
                 label: Some("material bind group"),
             });
 
-        LoadedMaterial {
-            id: LoadedMaterialId(bind_group.global_id()),
-            bind_group: Arc::new(ThreadLocalCell::new(bind_group)),
-        }
+        Ok(LoadedMaterial { bind_group })
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("load material error")]
+pub enum LoadMaterialError {
+    AssetNotFound(#[from] AssetNotFound),
+    LoadTexture(#[from] LoadTextureError),
+}
+
+#[derive(Debug)]
+pub struct LoadedMaterial {
+    pub bind_group: wgpu::BindGroup,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MaterialData {
+    pub ambient: Option<Texture>,
+    pub diffuse: Option<Texture>,
+    pub specular: Option<Texture>,
+    pub normal: Option<Texture>,
+    pub shininess: Option<Texture>,
+    pub dissolve: Option<Texture>,
 }

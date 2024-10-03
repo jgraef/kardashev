@@ -20,7 +20,7 @@ impl Display for AssetId {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub textures: Vec<Texture>,
@@ -35,7 +35,7 @@ pub struct Manifest {
     pub shaders: Vec<Shader>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Texture {
     pub id: AssetId,
 
@@ -56,13 +56,13 @@ pub struct Texture {
     pub v_edge_mode: Option<TextureEdgeMode>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextureSize {
     pub w: u32,
     pub h: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextureCrop {
     pub x: u32,
     pub y: u32,
@@ -70,7 +70,7 @@ pub struct TextureCrop {
     pub h: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TextureEdgeMode {
     ClampToEdge,
     Repeat,
@@ -78,7 +78,7 @@ pub enum TextureEdgeMode {
     ClampToBorder,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Material {
     pub id: AssetId,
 
@@ -104,7 +104,7 @@ pub struct Material {
     pub dissolve: Option<AssetId>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mesh {
     pub id: AssetId,
 
@@ -114,12 +114,12 @@ pub struct Mesh {
     pub label: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
     Changed { asset_id: AssetId },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Shader {
     pub id: AssetId,
 
@@ -129,7 +129,7 @@ pub struct Shader {
     pub naga_ir: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompiledShader {
     pub label: Option<String>,
     pub module: naga::Module,

@@ -13,11 +13,25 @@ use std::{
 use linear_map::LinearMap;
 
 use super::{
-    rendering_system::LoadContext,
+    rendering_system::{
+        Pipeline,
+        RenderTarget,
+    },
+    Backend,
     BackendId,
     Error,
 };
-use crate::utils::thread_local_cell::ThreadLocalCell;
+use crate::{
+    graphics::{
+        material::Material,
+        mesh::Mesh,
+    },
+    utils::thread_local_cell::ThreadLocalCell,
+    world::{
+        RunSystemContext,
+        System,
+    },
+};
 
 /// Trait defining how an [`Asset`] can be loaded to the GPU.
 ///
@@ -57,29 +71,38 @@ where
 }
 
 impl<A: GpuAsset> OnGpu<A> {
-    /// Returns the [`BackendResourceHandle`] for the backend specified by
-    /// `context`.
-    ///
-    /// This will try to load the asset to the GPU, if it isn't already.
-    pub fn get(
-        &mut self,
-        asset: &A,
-        context: &LoadContext,
-    ) -> Result<&BackendResource<<A as GpuAsset>::Loaded>, Error> {
+    /// Returns the [`BackendResourceHandle`] for the specified `backend_id`.
+    pub fn get(&self, backend_id: BackendId) -> Option<&BackendResource<<A as GpuAsset>::Loaded>> {
+        self.loaded.get(&backend_id)
+    }
+
+    /// Loads the asset to the GPU, if it isn't already.
+    pub fn load(&mut self, asset: &A, context: &LoadContext) -> Result<(), Error> {
         match self.loaded.entry(context.backend.id()) {
-            linear_map::Entry::Occupied(occupied) => Ok(occupied.into_mut()),
+            linear_map::Entry::Occupied(_occupied) => {}
             linear_map::Entry::Vacant(vacant) => {
+                tracing::debug!("loading asset to gpu");
                 let resource = asset.load(context)?;
-                Ok(vacant.insert(BackendResource::new(resource)))
+                vacant.insert(BackendResource::new(resource));
             }
         }
+        Ok(())
     }
+}
+
+#[derive(Debug)]
+pub struct LoadContext<'a> {
+    pub backend: &'a Backend,
+    pub pipeline: &'a Pipeline,
 }
 
 pub struct BackendResourceId<R> {
     id: NonZeroUsize,
     _t: PhantomData<R>,
 }
+
+unsafe impl<R> Send for BackendResourceId<R> {}
+unsafe impl<R> Sync for BackendResourceId<R> {}
 
 impl<R> PartialEq for BackendResourceId<R> {
     fn eq(&self, other: &Self) -> bool {
@@ -205,5 +228,75 @@ impl<R> BackendResource<R> {
 impl<R> From<R> for BackendResource<R> {
     fn from(resource: R) -> Self {
         Self::new(resource)
+    }
+}
+
+/// Loads assets to GPU(s)
+#[derive(Default)]
+pub struct GpuLoadingSystem {
+    command_buffer: hecs::CommandBuffer,
+}
+
+impl System for GpuLoadingSystem {
+    fn label(&self) -> &'static str {
+        "gpu-loading"
+    }
+
+    async fn run<'s: 'c, 'c: 'd, 'd>(
+        &'s mut self,
+        context: &'d mut RunSystemContext<'c>,
+    ) -> Result<(), crate::error::Error> {
+        /// Queries assets and loads them to a GPU
+        fn load<A: GpuAsset + Send + Sync + 'static>(
+            load_context: &LoadContext,
+            world: &hecs::World,
+            command_buffer: &mut hecs::CommandBuffer,
+        ) -> Result<(), Error> {
+            let mut query = world.query::<(&A, Option<&mut OnGpu<A>>)>();
+            for (entity, (asset, on_gpu)) in &mut query {
+                let mut on_gpu_buf = None;
+
+                let on_gpu = on_gpu.unwrap_or_else(|| {
+                    on_gpu_buf = Some(OnGpu::default());
+                    on_gpu_buf.as_mut().unwrap()
+                });
+
+                on_gpu.load(&asset, &load_context)?;
+
+                if let Some(on_gpu) = on_gpu_buf {
+                    command_buffer.insert_one(entity, on_gpu);
+                }
+            }
+            Ok(())
+        }
+
+        let mut render_targets = context.world.query::<&RenderTarget>();
+
+        // for each RenderTarget, load assets to its backend
+        //
+        // this could be done more efficiently, especially if `RenderTarget`s share
+        // backends (e.g. on WEBGPU)
+        for (_entity, render_target) in &mut render_targets {
+            let render_target = render_target.inner.get();
+            let load_context = LoadContext {
+                backend: &render_target.backend,
+                pipeline: &render_target.pipeline,
+            };
+
+            load::<Mesh>(&load_context, &context.world, &mut self.command_buffer)?;
+            load::<Material>(&load_context, &context.world, &mut self.command_buffer)?;
+        }
+
+        drop(render_targets);
+
+        self.command_buffer.run_on(&mut context.world);
+
+        Ok(())
+    }
+}
+
+impl Debug for GpuLoadingSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuLoadingSystem").finish_non_exhaustive()
     }
 }

@@ -1,4 +1,4 @@
-mod image_load;
+pub mod image_load;
 
 use std::{
     any::{
@@ -28,21 +28,24 @@ use futures::{
 };
 use kardashev_client::{
     AssetClient,
-    DownloadError,
-    DownloadFile,
+    Events,
 };
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
 };
 use tokio::sync::mpsc;
+use url::Url;
 
-pub use self::image_load::{
-    load_image,
-    LoadImage,
-    LoadImageError,
+use crate::{
+    utils::spawn_local_and_handle_error,
+    world::{
+        Plugin,
+        RegisterPluginContext,
+        RunSystemContext,
+        System,
+    },
 };
-use crate::utils::spawn_local_and_handle_error;
 
 #[derive(Debug, thiserror::Error)]
 #[error("asset loader error")]
@@ -60,45 +63,18 @@ pub struct AssetNotFound {
     asset_id: AssetId,
 }
 
-#[derive(Debug, Default)]
-pub struct AssetServerBuilder {
-    registered_asset_types: Vec<DynAssetType>,
-    client: Option<AssetClient>,
-}
-
-impl AssetServerBuilder {
-    pub fn register_asset<A: Asset>(mut self) -> Self {
-        self.registered_asset_types.push(DynAssetType::new::<A>());
-        self
-    }
-
-    pub fn with_client(mut self, client: AssetClient) -> Self {
-        self.client = Some(client);
-        self
-    }
-
-    pub fn build(self) -> AssetServer {
-        let (tx_command, rx_command) = mpsc::unbounded_channel();
-        let client = self.client.expect("missing AssetClient");
-        Reactor::spawn(client, rx_command, self.registered_asset_types);
-        AssetServer { tx_command }
-    }
-}
-
+/// Handle to the asset server that loads assets.
 #[derive(Clone, Debug)]
 pub struct AssetServer {
     tx_command: mpsc::UnboundedSender<Command>,
 }
 
 impl AssetServer {
-    pub fn builder() -> AssetServerBuilder {
-        AssetServerBuilder::default()
-    }
-
     fn send_command(&self, command: Command) {
         self.tx_command.send(command).expect("asset server died");
     }
 
+    /// Loads an asset of type `A` with the given `asset_id`.
     pub fn load<A: Asset>(&self, asset_id: AssetId) -> Load<A> {
         let (tx, rx) = oneshot::channel();
 
@@ -111,20 +87,37 @@ impl AssetServer {
             rx: Some(rx),
         }
     }
+
+    pub fn register_asset_type<A: Asset>(&self) {
+        self.send_command(Command::RegisterAssetType {
+            asset_type: DynAssetType::new::<A>(),
+        })
+    }
 }
 
-pub trait Asset: Sized + 'static {
+/// Trait for assets that can be loaded from the asset API.
+///
+/// See also [`GpuAsset`][`crate::rendering::loading::GpuAsset`].
+pub trait Asset: Sized + Send + Sync + 'static {
     type Dist;
-    type LoadError: std::error::Error;
+    type LoadError: std::error::Error + Send + Sync;
 
     fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>);
+
     fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist>;
-    fn load<'a>(
+
+    fn load<'a, 'b: 'a>(
         asset_id: AssetId,
-        loader: &'a mut Loader<'a>,
+        loader: &'a mut Loader<'b>,
     ) -> impl Future<Output = Result<Self, Self::LoadError>> + 'a;
 }
 
+/// An asset in the process of being loaded.
+///
+/// This is a future and can be polled for the loaded asset. It is also a
+/// component, and can be attached to entities. The [`AssetLoaderSystem`] will
+/// then check if the load is complete, remove the [`Load`] and attach the
+/// loaded asset to the entity.
 #[derive(Debug)]
 pub struct Load<A: Asset> {
     asset_id: AssetId,
@@ -166,14 +159,10 @@ struct Reactor {
 }
 
 impl Reactor {
-    fn spawn(
-        client: AssetClient,
-        rx_command: mpsc::UnboundedReceiver<Command>,
-        registered_asset_types: Vec<DynAssetType>,
-    ) {
+    fn spawn(client: AssetClient, rx_command: mpsc::UnboundedReceiver<Command>) {
         spawn_local_and_handle_error(async move {
             let manifest = client.get_manifest().await?;
-            let metadata = Metadata::from_manifest(manifest, &registered_asset_types);
+            let metadata = Metadata::from_manifest(manifest);
 
             let reactor = Self {
                 client,
@@ -187,7 +176,22 @@ impl Reactor {
     }
 
     async fn run(mut self) -> Result<(), Error> {
-        let mut events = self.client.events().await?;
+        let mut events = self
+            .client
+            .events()
+            .await
+            .map_err(|error| tracing::error!(?error, "asset client events doesn't work"))
+            .ok();
+        async fn next_event(
+            events: &mut Option<Events>,
+        ) -> Result<dist::Message, kardashev_client::Error> {
+            if let Some(events) = events {
+                events.next().await
+            }
+            else {
+                std::future::pending().await
+            }
+        }
 
         loop {
             tokio::select! {
@@ -195,7 +199,7 @@ impl Reactor {
                     let Some(command) = command_opt else { break; };
                     self.handle_command(command).await?;
                 }
-                event_result = events.next() => {
+                event_result = next_event(&mut events) => {
                     self.handle_event(event_result?).await?;
                 }
             }
@@ -210,6 +214,9 @@ impl Reactor {
                 tracing::debug!(asset_id = %load_request.asset_id(), asset_type = load_request.asset_type_name(), "loading asset");
                 let mut loader = Loader::from_reactor(self);
                 load_request.load(&mut loader).await;
+            }
+            Command::RegisterAssetType { asset_type } => {
+                self.metadata.register_asset_type_dyn(asset_type);
             }
         }
 
@@ -231,6 +238,7 @@ impl Reactor {
 #[derive(Debug)]
 enum Command {
     Load { load_request: DynAssetLoadRequest },
+    RegisterAssetType { asset_type: DynAssetType },
 }
 
 #[derive(Debug)]
@@ -240,12 +248,19 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    fn from_manifest(manifest: dist::Manifest, registered_asset_types: &[DynAssetType]) -> Self {
-        let mut refs = HashMap::new();
-        for asset_type in registered_asset_types {
-            asset_type.parse_dist_manifest(&manifest, &mut refs)
+    fn from_manifest(manifest: dist::Manifest) -> Self {
+        Self {
+            manifest,
+            refs: HashMap::new(),
         }
-        Self { manifest, refs }
+    }
+
+    fn register_asset_type<A: Asset>(&mut self) {
+        self.register_asset_type_dyn(DynAssetType::new::<A>());
+    }
+
+    fn register_asset_type_dyn(&mut self, asset_type: DynAssetType) {
+        asset_type.parse_dist_manifest(&self.manifest, &mut self.refs);
     }
 
     pub fn get<A: Asset>(&self, asset_id: AssetId) -> Result<&A::Dist, AssetNotFound> {
@@ -259,6 +274,7 @@ impl Metadata {
     }
 }
 
+/// Context for [`Asset::load`]
 #[derive(Debug)]
 pub struct Loader<'a> {
     pub metadata: &'a Metadata,
@@ -276,6 +292,12 @@ impl<'a> Loader<'a> {
     }
 }
 
+/// In-memory cache for asset data
+///
+/// # TODO
+///
+/// Either change this or make a second cache that caches the raw bytes
+/// downloaded. This can then be stored in IndexedDB.
 #[derive(Default)]
 pub struct Cache {
     cache: HashMap<(AssetId, TypeId), Arc<dyn Any + Send + Sync + 'static>>,
@@ -327,6 +349,105 @@ impl Debug for Cache {
     }
 }
 
+/// [`System`] that queries [`Load<A>`s](Load), loads them, and attaches the
+/// loaded asset.
+#[derive(Default)]
+pub struct AssetLoaderSystem {
+    command_buffer: hecs::CommandBuffer,
+}
+
+impl System for AssetLoaderSystem {
+    fn label(&self) -> &'static str {
+        "asset-loader"
+    }
+
+    async fn run<'s: 'c, 'c: 'd, 'd>(
+        &'s mut self,
+        context: &'d mut RunSystemContext<'c>,
+    ) -> Result<(), crate::error::Error> {
+        let Some(asset_type_registry) = context.resources.get::<AssetTypeRegistry>()
+        else {
+            tracing::warn!("missing AssetTypeRegistry resource");
+            return Ok(());
+        };
+
+        for asset_type in &asset_type_registry.asset_types {
+            asset_type.loader_system(&mut context.world, &mut self.command_buffer);
+        }
+
+        // note: we use our own command buffer so that loaded assets are already
+        // attached right after this system has run
+        self.command_buffer.run_on(&mut context.world);
+
+        Ok(())
+    }
+}
+
+impl Debug for AssetLoaderSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetLoaderSystem").finish_non_exhaustive()
+    }
+}
+
+/// Registry for asset types.
+///
+/// This is a resource that can be used to register asset types.
+///
+/// This is used by the [`AssetLoaderSystem`] to query the world for registered
+/// asset types, and by the asset server to parse metadata from the asset
+/// manifest.
+#[derive(Clone, Debug)]
+pub struct AssetTypeRegistry {
+    asset_types: Vec<DynAssetType>,
+    asset_server: AssetServer,
+}
+
+impl AssetTypeRegistry {
+    fn new(asset_server: AssetServer) -> Self {
+        Self {
+            asset_types: vec![],
+            asset_server,
+        }
+    }
+
+    pub fn register<A: Asset>(&mut self) -> &mut Self {
+        self.asset_types.push(DynAssetType::new::<A>());
+        self.asset_server.register_asset_type::<A>();
+        self
+    }
+}
+
+#[derive(Debug)]
+pub struct AssetsPlugin {
+    client: AssetClient,
+}
+
+impl AssetsPlugin {
+    pub fn from_url(asset_url: Url) -> Self {
+        Self::from_client(AssetClient::new(asset_url))
+    }
+
+    pub fn from_client(client: AssetClient) -> Self {
+        Self { client }
+    }
+}
+
+impl Plugin for AssetsPlugin {
+    fn register(self, context: RegisterPluginContext) {
+        let (tx_command, rx_command) = mpsc::unbounded_channel();
+        Reactor::spawn(self.client.clone(), rx_command);
+        let asset_server = AssetServer { tx_command };
+
+        context.resources.insert(asset_server.clone());
+        context
+            .resources
+            .insert(AssetTypeRegistry::new(asset_server));
+        context
+            .scheduler
+            .add_update_system(AssetLoaderSystem::default());
+    }
+}
+
 #[derive(Clone, Copy)]
 struct DynAssetType {
     inner: &'static dyn DynAssetTypeTrait,
@@ -359,6 +480,11 @@ impl Debug for DynAssetType {
 trait DynAssetTypeTrait {
     fn asset_type_name(&self) -> &'static str;
     fn parse_dist_manifest(&self, manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>);
+    fn loader_system<'w>(
+        &self,
+        world: &'w mut hecs::World,
+        command_buffer: &'w mut hecs::CommandBuffer,
+    );
 }
 
 struct DynAssetTypeImpl<A> {
@@ -372,6 +498,29 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
 
     fn parse_dist_manifest(&self, manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
         A::parse_dist_manifest(manifest, refs);
+    }
+
+    fn loader_system<'w>(
+        &self,
+        world: &'w mut hecs::World,
+        command_buffer: &'w mut hecs::CommandBuffer,
+    ) {
+        let query = world.query_mut::<hecs::Without<&mut Load<A>, &A>>();
+
+        for (entity, load) in query {
+            match load.try_get() {
+                None => {}
+                Some(Ok(asset)) => {
+                    tracing::debug!(asset_id = %load.asset_id, "asset loaded");
+                    command_buffer.insert_one(entity, asset);
+                    command_buffer.remove_one::<Load<A>>(entity);
+                }
+                Some(Err(error)) => {
+                    tracing::error!(asset_id = %load.asset_id, ?error, "failed to load asset");
+                    command_buffer.remove_one::<Load<A>>(entity);
+                }
+            }
+        }
     }
 }
 
@@ -447,7 +596,7 @@ impl<A: Asset> DynAssetLoadRequestTrait for DynAssetLoadRequestImpl<A> {
             if let Err(error) = &result {
                 tracing::error!(?error, "asset load failed");
             }
-            self.tx.send(result);
+            let _ = self.tx.send(result);
         })
     }
 }

@@ -18,9 +18,9 @@ pub use kardashev_protocol::assets::{
 };
 use wgpu::util::DeviceExt;
 
-use super::{
-    loading::GpuAsset,
-    rendering_system::LoadContext,
+use super::loading::{
+    GpuAsset,
+    LoadContext,
 };
 use crate::assets::{
     Asset,
@@ -49,9 +49,9 @@ impl Asset for Mesh {
         manifest.meshes.get(index)
     }
 
-    async fn load<'a>(
+    async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
-        loader: &'a mut Loader<'a>,
+        loader: &'a mut Loader<'b>,
     ) -> Result<Self, MeshLoadError> {
         let metadata = loader.metadata.get::<Self>(asset_id)?;
 
