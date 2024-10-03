@@ -22,7 +22,16 @@ use crate::{
 };
 
 pub fn router() -> Router<Context> {
-    Router::new().route("/star", routing::post(create_stars))
+    Router::new()
+        .route("/star", routing::post(create_stars))
+        .route(
+            "/shutdown",
+            routing::get(|State(context): State<Context>| {
+                async move {
+                    context.shutdown();
+                }
+            }),
+        )
 }
 
 async fn create_stars(

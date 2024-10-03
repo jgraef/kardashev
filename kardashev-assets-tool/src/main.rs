@@ -1,18 +1,11 @@
-#![allow(dead_code)]
-
-mod atlas;
-mod build_info;
-mod processor;
-mod source;
-
 use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::Error;
-pub use kardashev_protocol::assets as dist;
-use uuid::Uuid;
-
-use crate::processor::Processor;
+use kardashev_assets::{
+    process,
+    AssetId,
+};
 
 #[derive(Debug, Parser)]
 pub enum Args {
@@ -21,7 +14,7 @@ pub enum Args {
         n: usize,
     },
     Build {
-        #[arg(long, env = "ASSETS", default_value = "./assets")]
+        #[arg(long, env = "ASSETS", default_value = "./assets/source")]
         assets: PathBuf,
 
         #[arg(long, env = "DIST", default_value = "./assets/dist")]
@@ -39,13 +32,11 @@ async fn main() -> Result<(), Error> {
     match args {
         Args::Id { n } => {
             for _ in 0..n {
-                println!("{}", Uuid::new_v4());
+                println!("{}", AssetId::generate());
             }
         }
         Args::Build { assets, dist } => {
-            let mut processor = Processor::new(&dist)?;
-            processor.process_directory(&assets)?;
-            processor.finalize()?;
+            process(&assets, &dist)?;
         }
     }
 

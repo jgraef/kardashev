@@ -1,10 +1,9 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::BufWriter,
-    path::Path,
 };
 
-use color_eyre::eyre::bail;
 use image::{
     ImageFormat,
     ImageReader,
@@ -13,28 +12,36 @@ use kardashev_protocol::assets::AssetId;
 
 use crate::{
     dist,
-    processor::{
-        input_path,
-        Process,
-        Processor,
-    },
+    processor::ProcessContext,
     source::{
+        Manifest,
         ScaleTo,
         Texture,
     },
+    Asset,
     Error,
 };
 
-impl Process for Texture {
-    fn process(
+impl Asset for Texture {
+    fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
+        &manifest.textures
+    }
+
+    fn process<'a, 'b: 'a>(
         &self,
         id: AssetId,
-        processor: &mut Processor,
-        manifest_path: &Path,
+        context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
-        let path = input_path(manifest_path, &self.path);
+        if !context.processing(id) {
+            return Ok(());
+        }
 
-        tracing::debug!(%id, label = ?self.label, path = %path.display(), "processing image");
+        let path = context.input_path(&self.path);
+
+        if context.is_fresh_file(id, &path)? {
+            tracing::debug!("not modified since last build. skipping.");
+            return Ok(());
+        }
 
         let mut image = ImageReader::open(&path)?.decode()?;
 
@@ -65,7 +72,7 @@ impl Process for Texture {
                         *height,
                     ]
                 }
-                _ => bail!("Either width, height, or both must be specified for scaling"),
+                _ => panic!("Either width, height, or both must be specified for scaling"),
             };
             image = image.resize_exact(
                 new_dimensions[0],
@@ -75,10 +82,7 @@ impl Process for Texture {
         }
 
         if let Some(atlas_builder_id) = self.atlas.clone().unwrap_or_default().into() {
-            let atlas_builder = processor
-                .atlas_builders
-                .entry(atlas_builder_id)
-                .or_default();
+            let atlas_builder = context.atlas_builders.entry(atlas_builder_id).or_default();
             atlas_builder.insert(
                 image.to_rgba8(),
                 UnfinishedTexture {
@@ -89,11 +93,11 @@ impl Process for Texture {
         }
         else {
             let filename = format!("{id}.png");
-            let path = processor.dist_path.join(&filename);
+            let path = context.dist_path.join(&filename);
             let mut writer = BufWriter::new(File::create(&path)?);
             image.write_to(&mut writer, ImageFormat::Png)?;
 
-            processor.dist_manifest.textures.push(dist::Texture {
+            context.dist_manifest.textures.push(dist::Texture {
                 id,
                 image: filename.clone(),
                 label: self.label.clone(),
@@ -106,6 +110,8 @@ impl Process for Texture {
                 v_edge_mode: None,
             });
         }
+
+        context.set_build_time(id);
 
         Ok(())
     }

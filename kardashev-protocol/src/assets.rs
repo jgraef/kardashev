@@ -12,7 +12,18 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(transparent)]
-pub struct AssetId(pub Uuid);
+pub struct AssetId(Uuid);
+
+impl AssetId {
+    pub fn generate() -> Self {
+        Self::from_uuid(Uuid::new_v4())
+    }
+
+    #[doc(hidden)]
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
 
 impl Display for AssetId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -23,7 +34,7 @@ impl Display for AssetId {
 #[macro_export]
 macro_rules! asset_id {
     ($lit:literal) => {
-        ::kardashev_protocol::assets::AssetId(::kardashev_protocol::uuid::uuid!($lit))
+        ::kardashev_protocol::assets::AssetId::from_uuid(::kardashev_protocol::uuid::uuid!($lit))
     };
 }
 
@@ -123,7 +134,7 @@ pub struct Mesh {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
-    Changed { asset_id: AssetId },
+    Changed { asset_ids: Vec<AssetId> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

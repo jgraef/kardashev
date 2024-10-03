@@ -3,12 +3,17 @@ resolver = "2"
 members = [
     "kardashev-admin",
     "kardashev-assets",
+    "kardashev-assets-tool",
     "kardashev-client",
     "kardashev-lab",
     "kardashev-protocol",
     "kardashev-server",
     "kardashev-ui",
 ]
+
+[workspace.dependencies.kardashev-assets]
+path = "kardashev-assets"
+version = "0.1.0"
 
 [workspace.dependencies.kardashev-client]
 path = "kardashev-client"

@@ -4,11 +4,14 @@ use std::{
 };
 
 use kardashev_protocol::assets::AssetId;
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::atlas::AtlasBuilderId;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     #[serde(default)]
@@ -148,4 +151,14 @@ pub struct Shader {
 pub enum AssetIdOrInline<T> {
     AssetId(AssetId),
     Inline(T),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MaterialProperty {
+    Ambient,
+    Diffuse,
+    Specular,
+    Normal,
+    Shininess,
+    Dissolve,
 }

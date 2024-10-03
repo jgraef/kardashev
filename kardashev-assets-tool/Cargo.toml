@@ -1,0 +1,16 @@
+[package]
+name = "kardashev-assets-tool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.kardashev-assets]
+workspace = true
+
+[dependencies]
+color-eyre = "0.6.2"
+clap = { version = "4.5.18", features = ["derive", "env"] }
+dotenvy = "0.15.7"
+tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+# indicatif = "0.17.8"

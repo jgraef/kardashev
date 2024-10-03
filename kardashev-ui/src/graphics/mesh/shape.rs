@@ -132,3 +132,72 @@ fn mesh_sphere_uv(radius: f32, sectors: usize, stacks: usize) -> MeshData {
         vertices,
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Rectangle {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Rectangle {
+    pub fn new(width: f32, height: f32) -> Self {
+        Self { width, height }
+    }
+}
+
+impl Default for Rectangle {
+    fn default() -> Self {
+        Self {
+            width: 1.,
+            height: 1.,
+        }
+    }
+}
+
+impl Meshable for Rectangle {
+    type Output = RectangleMeshBuilder;
+
+    fn mesh(&self) -> Self::Output {
+        RectangleMeshBuilder { rectangle: *self }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RectangleMeshBuilder {
+    pub rectangle: Rectangle,
+}
+
+impl MeshBuilder for RectangleMeshBuilder {
+    fn build(&self) -> MeshData {
+        MeshData {
+            primitive_topology: PrimitiveTopology::TriangleList,
+            indices: vec![0, 2, 1, 1, 2, 3],
+            vertices: vec![
+                Vertex {
+                    position: [
+                        -0.5 * self.rectangle.width,
+                        -0.5 * self.rectangle.height,
+                        0.,
+                    ],
+                    normal: [0., 0., 1.],
+                    tex_coords: [0., 0.],
+                },
+                Vertex {
+                    position: [0.5 * self.rectangle.width, -0.5 * self.rectangle.height, 0.],
+                    normal: [0., 0., 1.],
+                    tex_coords: [1., 0.],
+                },
+                Vertex {
+                    position: [-0.5 * self.rectangle.width, 0.5 * self.rectangle.height, 0.],
+                    normal: [0., 0., 1.],
+                    tex_coords: [0., 1.],
+                },
+                Vertex {
+                    position: [0.5 * self.rectangle.width, 0.5 * self.rectangle.height, 0.],
+                    normal: [0., 0., 1.],
+                    tex_coords: [1., 1.],
+                },
+            ],
+        }
+    }
+}

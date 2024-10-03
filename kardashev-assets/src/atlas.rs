@@ -6,7 +6,6 @@ use std::{
     },
 };
 
-use color_eyre::eyre::bail;
 use guillotiere::{
     AllocId,
     AtlasAllocator,
@@ -83,7 +82,7 @@ impl<D> AtlasBuilder<D> {
                 let new_size = old_size * 2;
                 let changes = self.allocator.resize_and_rearrange(new_size);
                 if !changes.failures.is_empty() {
-                    bail!("Failed to grow atlas allocator");
+                    panic!("failed to grow atlas allocator");
                 }
                 let changes = changes
                     .changes

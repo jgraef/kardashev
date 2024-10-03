@@ -3,20 +3,24 @@ use std::collections::{
     HashSet,
 };
 
+use chrono::{
+    DateTime,
+    Utc,
+};
 use kardashev_protocol::assets::AssetId;
 use serde::{
     Deserialize,
     Serialize,
 };
-use uuid::Uuid;
 
-use crate::processor::material::MaterialProperty;
+use crate::source::MaterialProperty;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(from = "serialize::BuildInfo", into = "serialize::BuildInfo")]
 pub struct BuildInfo {
     pub dependencies: HashMap<AssetId, HashSet<AssetId>>,
     pub generated_ids: HashMap<GeneratedIdKey, AssetId>,
+    pub build_times: HashMap<AssetId, DateTime<Utc>>,
 }
 
 impl BuildInfo {
@@ -24,7 +28,7 @@ impl BuildInfo {
         *self
             .generated_ids
             .entry(key)
-            .or_insert_with(|| AssetId(Uuid::new_v4()))
+            .or_insert_with(|| AssetId::generate())
     }
 
     pub fn add_dependency(&mut self, id: AssetId, depends_on: AssetId) {
@@ -41,18 +45,26 @@ pub enum GeneratedIdKey {
 }
 
 mod serialize {
+    use chrono::{
+        DateTime,
+        Utc,
+    };
     use kardashev_protocol::assets::AssetId;
     use serde::{
         Deserialize,
         Serialize,
     };
 
-    use crate::build_info::GeneratedIdKey;
+    use super::GeneratedIdKey;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct BuildInfo {
+        #[serde(default)]
         dependencies: Vec<Dependency>,
+        #[serde(default)]
         generated_ids: Vec<GeneratedId>,
+        #[serde(default)]
+        build_times: Vec<BuildTime>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -67,6 +79,12 @@ mod serialize {
         id: AssetId,
     }
 
+    #[derive(Debug, Serialize, Deserialize)]
+    struct BuildTime {
+        id: AssetId,
+        build_time: DateTime<Utc>,
+    }
+
     impl From<BuildInfo> for super::BuildInfo {
         fn from(value: BuildInfo) -> Self {
             Self {
@@ -79,6 +97,11 @@ mod serialize {
                     .generated_ids
                     .into_iter()
                     .map(|generated_id| (generated_id.key, generated_id.id))
+                    .collect(),
+                build_times: value
+                    .build_times
+                    .into_iter()
+                    .map(|build_time| (build_time.id, build_time.build_time))
                     .collect(),
             }
         }
@@ -101,6 +124,11 @@ mod serialize {
                     .generated_ids
                     .into_iter()
                     .map(|(key, id)| GeneratedId { key, id })
+                    .collect(),
+                build_times: value
+                    .build_times
+                    .into_iter()
+                    .map(|(id, build_time)| BuildTime { id, build_time })
                     .collect(),
             }
         }

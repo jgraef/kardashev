@@ -1,55 +1,69 @@
-use std::path::Path;
+use std::collections::HashMap;
 
 use kardashev_protocol::assets::AssetId;
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     build_info::GeneratedIdKey,
     dist,
-    processor::{
-        Process,
-        Processor,
-    },
+    processor::ProcessContext,
     source::{
         AssetIdOrInline,
+        Manifest,
         Material,
+        MaterialProperty,
         Texture,
     },
+    Asset,
     Error,
 };
 
-impl Process for Material {
-    fn process(
+impl Asset for Material {
+    fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
+        &manifest.materials
+    }
+
+    fn process<'a, 'b: 'a>(
         &self,
         id: AssetId,
-        mut processor: &mut Processor,
-        manifest_path: &Path,
+        mut context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
+        if !context.processing(id) {
+            return Ok(());
+        }
+
+        let mut is_fresh = true;
+
         let mut process_texture = |texture: &Option<AssetIdOrInline<Texture>>,
                                    property: MaterialProperty|
          -> Result<Option<AssetId>, Error> {
             if let Some(texture) = texture {
-                let texture_asset_id = match texture {
-                    AssetIdOrInline::AssetId(asset_id) => *asset_id,
+                let (texture_asset_id, texture) = match texture {
+                    AssetIdOrInline::AssetId(texture_asset_id) => {
+                        let texture = context
+                            .source
+                            .get_asset::<Texture>(*texture_asset_id)
+                            .ok_or_else(|| {
+                                Error::AssetNotFound {
+                                    id: *texture_asset_id,
+                                }
+                            })?;
+                        (*texture_asset_id, texture)
+                    }
                     AssetIdOrInline::Inline(texture) => {
                         let texture_asset_id =
-                            processor
+                            context
                                 .build_info
                                 .generate_id(GeneratedIdKey::MaterialTexture {
                                     material: id,
                                     property,
                                 });
-
-                        texture.process(texture_asset_id, &mut processor, manifest_path)?;
-
-                        texture_asset_id
+                        (texture_asset_id, texture)
                     }
                 };
 
-                processor.build_info.add_dependency(id, texture_asset_id);
+                texture.process(texture_asset_id, &mut context)?;
+                is_fresh &= context.is_fresh_dependency(id, texture_asset_id);
+                context.build_info.add_dependency(id, texture_asset_id);
 
                 Ok(Some(texture_asset_id))
             }
@@ -65,7 +79,12 @@ impl Process for Material {
         let shininess = process_texture(&self.shininess, MaterialProperty::Shininess)?;
         let dissolve = process_texture(&self.dissolve, MaterialProperty::Dissolve)?;
 
-        processor.dist_manifest.materials.push(dist::Material {
+        if is_fresh {
+            tracing::debug!(%id, "not modified since last build. skipping.");
+            return Ok(());
+        }
+
+        context.dist_manifest.materials.push(dist::Material {
             id,
             label: self.label.clone(),
             ambient,
@@ -76,16 +95,8 @@ impl Process for Material {
             dissolve,
         });
 
+        context.set_build_time(id);
+
         Ok(())
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MaterialProperty {
-    Ambient,
-    Diffuse,
-    Specular,
-    Normal,
-    Shininess,
-    Dissolve,
 }

@@ -83,6 +83,13 @@ impl GpuAsset for Mesh {
     type Loaded = LoadedMesh;
 
     fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
+        if self.mesh_data.primitive_topology != PrimitiveTopology::TriangleList {
+            todo!(
+                "trying to load mesh with incompatible primitive topology: {:?}",
+                self.mesh_data.primitive_topology
+            );
+        }
+
         let vertex_buffer =
             context
                 .backend

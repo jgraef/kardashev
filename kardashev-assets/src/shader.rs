@@ -1,31 +1,42 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::BufWriter,
-    path::Path,
 };
 
 use kardashev_protocol::assets::AssetId;
 
 use crate::{
     dist,
-    processor::{
-        input_path,
-        Process,
-        Processor,
+    processor::ProcessContext,
+    source::{
+        Manifest,
+        Shader,
     },
-    source::Shader,
+    Asset,
     Error,
 };
 
-impl Process for Shader {
-    fn process(
+impl Asset for Shader {
+    fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
+        &manifest.shaders
+    }
+
+    fn process<'a, 'b: 'a>(
         &self,
         id: AssetId,
-        processor: &mut Processor,
-        manifest_path: &Path,
+        context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
-        let path = input_path(manifest_path, &self.path);
-        tracing::debug!(%id, path=%path.display(), "processing shader");
+        if !context.processing(id) {
+            return Ok(());
+        }
+
+        let path = context.input_path(&self.path);
+
+        if context.is_fresh_file(id, &path)? {
+            tracing::debug!("not modified since last build. skipping.");
+            return Ok(());
+        }
 
         let source = std::fs::read_to_string(&path)?;
         let module = naga::front::wgsl::parse_str(&source)?;
@@ -42,16 +53,18 @@ impl Process for Shader {
                     module_info,
                 };
                 let filename = format!("{id}.naga");
-                let path = processor.dist_path.join(&filename);
+                let path = context.dist_path.join(&filename);
                 let mut writer = BufWriter::new(File::create(&path)?);
                 //serde_json::to_writer_pretty(writer, &compiled)?;
                 rmp_serde::encode::write(&mut writer, &compiled)?;
 
-                processor.dist_manifest.shaders.push(dist::Shader {
+                context.dist_manifest.shaders.push(dist::Shader {
                     id,
                     label: self.label.clone(),
                     naga_ir: filename,
                 });
+
+                context.set_build_time(id);
             }
             Err(error) => {
                 error.emit_to_stderr_with_path(&source, &path.to_string_lossy());

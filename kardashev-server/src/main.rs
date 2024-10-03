@@ -1,4 +1,5 @@
 mod api;
+mod assets;
 mod error;
 mod server;
 mod util;
@@ -9,6 +10,11 @@ use clap::Parser;
 use server::Server;
 use sqlx::PgPool;
 use tracing_subscriber::EnvFilter;
+
+use crate::{
+    server::Config,
+    util::graceful_shutdown,
+};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -31,7 +37,11 @@ async fn main() -> Result<(), color_eyre::eyre::Error> {
     let args = Args::parse();
 
     let db = PgPool::connect(&args.database_url).await?;
-    let server = Server::new(db).await?;
+
+    let config = Config::cargo();
+
+    let server = Server::new(db, config).await?;
+    graceful_shutdown(server.shutdown.clone());
     server.bind(args.bind).await?;
 
     Ok(())

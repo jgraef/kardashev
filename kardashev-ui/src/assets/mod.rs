@@ -251,8 +251,8 @@ impl Reactor {
 
     async fn handle_event(&mut self, event: dist::Message) -> Result<(), Error> {
         match event {
-            dist::Message::Changed { asset_id } => {
-                tracing::debug!(%asset_id, "asset changed");
+            dist::Message::Changed { asset_ids } => {
+                tracing::debug!(?asset_ids, "assets changed");
                 // todo: the specified asset was changed and can be reloaded
             }
         }
