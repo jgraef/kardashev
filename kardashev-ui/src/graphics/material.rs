@@ -30,17 +30,17 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Material {
     pub asset_id: Option<AssetId>,
-    pub material_data: Option<Arc<MaterialData>>,
+    pub material_data: Arc<MaterialData>,
 }
 
 impl Material {
     pub fn from_diffuse(diffuse: impl Into<Texture>) -> Self {
         Self {
             asset_id: None,
-            material_data: Some(Arc::new(MaterialData {
+            material_data: Arc::new(MaterialData {
                 diffuse: Some(diffuse.into()),
                 ..Default::default()
-            })),
+            }),
         }
     }
 }
@@ -63,10 +63,10 @@ impl Asset for Material {
         asset_id: AssetId,
         loader: &'a mut Loader<'b>,
     ) -> Result<Self, Self::LoadError> {
+        tracing::debug!(%asset_id, "loading material");
+
         // we don't use the cache for materials, since the textures are cached anyway
 
-        // we clone here, since we can't keep the borrow into Loader. we could also
-        // construct a new Loader with reborrows.
         let metadata = loader.metadata.get::<Self>(asset_id)?;
 
         async fn load_material_texture<'a, 'b: 'a>(
@@ -103,9 +103,11 @@ impl Asset for Material {
             dissolve,
         };
 
+        tracing::debug!(%asset_id, "material loaded");
+
         Ok(Self {
             asset_id: Some(asset_id),
-            material_data: Some(Arc::new(material_data)),
+            material_data: Arc::new(material_data),
         })
     }
 }
@@ -122,13 +124,12 @@ impl GpuAsset for Material {
                     .transpose()
             };
 
-        let material_data = self.material_data.as_ref().unwrap();
-        let ambient = load_texture(&material_data.ambient)?;
-        let diffuse = load_texture(&material_data.diffuse)?;
-        let specular = load_texture(&material_data.specular)?;
-        let normal = load_texture(&material_data.normal)?;
-        let shininess = load_texture(&material_data.shininess)?;
-        let dissolve = load_texture(&material_data.dissolve)?;
+        let ambient = load_texture(&self.material_data.ambient)?;
+        let diffuse = load_texture(&self.material_data.diffuse)?;
+        let specular = load_texture(&self.material_data.specular)?;
+        let normal = load_texture(&self.material_data.normal)?;
+        let shininess = load_texture(&self.material_data.shininess)?;
+        let dissolve = load_texture(&self.material_data.dissolve)?;
 
         fn texture_view_bind_group_entry<'a>(
             binding: u32,

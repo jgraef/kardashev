@@ -19,7 +19,10 @@ use super::{
     Backend,
 };
 use crate::assets::{
-    image_load,
+    image_load::{
+        self,
+        AssetClientLoadImageExt,
+    },
     Asset,
     AssetNotFound,
     Loader,
@@ -28,14 +31,14 @@ use crate::assets::{
 #[derive(Clone, Debug)]
 pub struct Texture {
     asset_id: Option<AssetId>,
-    texture_data: Option<Arc<TextureData>>,
+    texture_data: Arc<TextureData>,
 }
 
 impl From<RgbaImage> for Texture {
     fn from(image: RgbaImage) -> Self {
         Self {
             asset_id: None,
-            texture_data: Some(Arc::new(TextureData { image })),
+            texture_data: Arc::new(TextureData { image }),
         }
     }
 }
@@ -58,21 +61,29 @@ impl Asset for Texture {
         asset_id: AssetId,
         loader: &'a mut Loader<'b>,
     ) -> Result<Self, Self::LoadError> {
+        tracing::debug!(%asset_id, "loading texture");
+
         let metadata = loader.metadata.get::<Texture>(asset_id)?;
+
+        if metadata.crop.is_some() {
+            todo!("refactor texture atlas system");
+        }
 
         let texture_data = loader
             .cache
             .get_or_try_insert_async(asset_id, || {
                 async {
-                    let image = image_load::load_image(&metadata.image).await?;
+                    let image = loader.client.load_image(&metadata.image).await?;
                     Ok::<_, LoadTextureError>(Arc::new(TextureData { image }))
                 }
             })
             .await?;
 
+        tracing::debug!(%asset_id, "texture_loaded");
+
         Ok(Self {
             asset_id: Some(asset_id),
-            texture_data: Some(texture_data),
+            texture_data,
         })
     }
 }
@@ -81,7 +92,7 @@ impl GpuAsset for Texture {
     type Loaded = LoadedTexture;
 
     fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
-        let image = &self.texture_data.as_ref().unwrap().image;
+        let image = &self.texture_data.as_ref().image;
 
         let image_size = image.dimensions();
         let texture_size = wgpu::Extent3d {

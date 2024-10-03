@@ -17,6 +17,7 @@ use tokio::sync::watch;
 use url::Url;
 
 use crate::{
+    add_trailing_slash,
     Error,
     UrlExt,
 };
@@ -28,12 +29,20 @@ pub struct AssetClient {
 }
 
 impl AssetClient {
-    pub fn new(asset_url: Url) -> Self {
+    pub fn new(mut asset_url: Url) -> Self {
         let client = reqwest::Client::new();
+
+        // the trailing slash is important for `Url::join` to work properly
+        add_trailing_slash(&mut asset_url);
+
         Self {
             client,
             asset_url: Arc::new(asset_url),
         }
+    }
+
+    pub fn asset_url(&self) -> &Url {
+        &self.asset_url
     }
 
     pub async fn get_manifest(&self) -> Result<Manifest, Error> {

@@ -3,6 +3,7 @@ mod map;
 
 use components::window::provide_graphics;
 use kardashev_client::ApiClient;
+use kardashev_protocol::asset_id;
 use leptos::{
     component,
     expect_context,
@@ -24,8 +25,8 @@ use self::map::Map;
 use crate::{
     app::components::dock::Dock,
     assets::{
-        image_load::load_image,
         AssetsPlugin,
+        Load,
     },
     error::Error,
     graphics::{
@@ -132,20 +133,12 @@ fn provide_world(asset_url: Url) {
                     // system when the request finishes
                     //let stars = api_client.get_stars().await?;
 
-                    // todo: use asset server
-                    let star_texture =
-                        load_image("assets/796e953f-3985-4cc2-994b-ff74aaba2fe9.png")
-                            .await
-                            .unwrap();
-                    let mesh = Mesh::from(shape::Sphere::default().mesh().build());
-                    let material = Material::from_diffuse(star_texture);
-
                     context.world.spawn((
                         Transform {
                             model_matrix: Similarity3::identity(),
                         },
-                        mesh,
-                        material,
+                        Mesh::from(shape::Sphere::default().mesh().build()),
+                        Load::<Material>::new(asset_id!("796e953f-3985-4cc2-994b-ff74aaba2fe9")),
                     ));
 
                     Ok(())

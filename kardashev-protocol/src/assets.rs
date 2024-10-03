@@ -20,6 +20,13 @@ impl Display for AssetId {
     }
 }
 
+#[macro_export]
+macro_rules! asset_id {
+    ($lit:literal) => {
+        ::kardashev_protocol::assets::AssetId(::kardashev_protocol::uuid::uuid!($lit))
+    };
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

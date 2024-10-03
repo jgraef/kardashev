@@ -81,7 +81,7 @@ impl<A: GpuAsset> OnGpu<A> {
         match self.loaded.entry(context.backend.id()) {
             linear_map::Entry::Occupied(_occupied) => {}
             linear_map::Entry::Vacant(vacant) => {
-                tracing::debug!("loading asset to gpu");
+                tracing::debug!(asset_type = type_name::<A>(), backend_id = ?context.backend.id(), "loading asset to gpu");
                 let resource = asset.load(context)?;
                 vacant.insert(BackendResource::new(resource));
             }

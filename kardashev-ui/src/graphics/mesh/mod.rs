@@ -32,7 +32,7 @@ use crate::assets::{
 pub struct Mesh {
     pub asset_id: Option<AssetId>,
     pub label: Option<String>,
-    pub mesh_data: Option<Arc<MeshData>>,
+    pub mesh_data: Arc<MeshData>,
 }
 
 impl Asset for Mesh {
@@ -74,7 +74,7 @@ impl Asset for Mesh {
         Ok(Self {
             asset_id: Some(asset_id),
             label: metadata.label.clone(),
-            mesh_data: Some(mesh_data),
+            mesh_data,
         })
     }
 }
@@ -83,9 +83,6 @@ impl GpuAsset for Mesh {
     type Loaded = LoadedMesh;
 
     fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
-        // todo: don't unwrap, but return an error
-        let mesh_data = self.mesh_data.as_ref().unwrap();
-
         let vertex_buffer =
             context
                 .backend
@@ -96,7 +93,7 @@ impl GpuAsset for Mesh {
                         .as_ref()
                         .map(|l| format!("vertex buffer: {l}"))
                         .as_deref(),
-                    contents: bytemuck::cast_slice(&mesh_data.vertices),
+                    contents: bytemuck::cast_slice(&self.mesh_data.vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 });
 
@@ -110,14 +107,14 @@ impl GpuAsset for Mesh {
                         .as_ref()
                         .map(|l| format!("index buffer: {l}"))
                         .as_deref(),
-                    contents: bytemuck::cast_slice(&mesh_data.indices),
+                    contents: bytemuck::cast_slice(&self.mesh_data.indices),
                     usage: wgpu::BufferUsages::INDEX,
                 });
 
         Ok(LoadedMesh {
             vertex_buffer,
             index_buffer,
-            num_indices: mesh_data.indices.len().try_into().unwrap(),
+            num_indices: self.mesh_data.indices.len().try_into().unwrap(),
         })
     }
 }
@@ -127,7 +124,7 @@ impl From<MeshData> for Mesh {
         Mesh {
             asset_id: None,
             label: None,
-            mesh_data: Some(Arc::new(mesh_data)),
+            mesh_data: Arc::new(mesh_data),
         }
     }
 }

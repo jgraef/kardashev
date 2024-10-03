@@ -1,9 +1,6 @@
 use std::{
     pin::Pin,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::Arc,
     task::{
         Context,
         Poll,
@@ -12,13 +9,15 @@ use std::{
 
 use futures::Future;
 use image::RgbaImage;
+use kardashev_client::AssetClient;
+use parking_lot::Mutex;
 use tokio::sync::oneshot;
+use url::Url;
 use wasm_bindgen::{
     closure::Closure,
     JsCast,
 };
 use web_sys::{
-    ErrorEvent,
     Event,
     HtmlImageElement,
     OffscreenCanvas,
@@ -26,20 +25,36 @@ use web_sys::{
 };
 
 #[derive(Debug, thiserror::Error)]
-pub enum LoadImageError {
-    #[error("{message}")]
-    ErrorEvent { message: String },
+#[error("load image error")]
+pub struct LoadImageError {
+    pub url: Url,
+    pub reason: LoadImageErrorReason,
 }
 
-/// Loads image data asynchronously using the browser image decoding.
-///
-/// Internally this creates an `<img>` tag and then grabs the loaded image's
-/// data.
-///
-/// # TODO
-///
-/// - Change unwraps to expect or proper errors.
-pub fn load_image(src: &str) -> LoadImage {
+#[derive(Debug, thiserror::Error)]
+pub enum LoadImageErrorReason {
+    #[error("error event")]
+    ErrorEvent,
+    #[error("failed to decode image")]
+    DecodeError,
+}
+
+pub trait AssetClientLoadImageExt {
+    fn load_image(&self, url: &str) -> LoadImage;
+}
+
+impl AssetClientLoadImageExt for AssetClient {
+    /// Loads image data using the browser image decoding.
+    fn load_image(&self, url: &str) -> LoadImage {
+        tracing::debug!(asset_url = %self.asset_url(), %url, "building image url");
+        let url = self.asset_url().join(url).unwrap();
+        load_image(url)
+    }
+}
+
+fn load_image(url: Url) -> LoadImage {
+    tracing::debug!(%url, "loading image");
+
     let (tx, rx) = oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
@@ -71,31 +86,32 @@ pub fn load_image(src: &str) -> LoadImage {
             // values between 0 and 255 (inclusive).
             let data = image_data.data().0;
 
-            let image = RgbaImage::from_raw(size[0], size[1], data).unwrap();
+            let result = RgbaImage::from_raw(size[0], size[1], data)
+                .ok_or(LoadImageErrorReason::DecodeError);
 
-            let mut tx = tx.lock().unwrap();
+            let mut tx = tx.lock();
             if let Some(tx) = tx.take() {
                 // an error indicates that the receiver has been dropped. we can ignore that.
-                let _ = tx.send(Ok(image));
+                let _ = tx.send(result);
             }
         })
     };
     image_element.set_onload(Some(onload_callback.as_ref().unchecked_ref()));
 
-    let onerror_callback = Closure::<dyn FnMut(ErrorEvent)>::new(move |event: ErrorEvent| {
-        let message = event.message();
-        tracing::warn!("failed to load image: {message}");
-
-        let mut tx = tx.lock().unwrap();
+    let onerror_callback = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+        //let message = event.message();
+        let mut tx = tx.lock();
         if let Some(tx) = tx.take() {
             // an error indicates that the receiver has been dropped. we can ignore that.
-            let _ = tx.send(Err(LoadImageError::ErrorEvent { message }));
+            let _ = tx.send(Err(LoadImageErrorReason::ErrorEvent));
         }
     });
+    image_element.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
 
-    image_element.set_src(src);
+    image_element.set_src(url.as_str());
 
     LoadImage {
+        url,
         image_element,
         onload_callback,
         onerror_callback,
@@ -105,10 +121,11 @@ pub fn load_image(src: &str) -> LoadImage {
 
 /// Future returned by [`load_image`]. This resolves to the loaded image.
 pub struct LoadImage {
+    url: Url,
     image_element: HtmlImageElement,
     onload_callback: Closure<dyn FnMut(Event)>,
-    onerror_callback: Closure<dyn FnMut(ErrorEvent)>,
-    rx: oneshot::Receiver<Result<RgbaImage, LoadImageError>>,
+    onerror_callback: Closure<dyn FnMut(Event)>,
+    rx: oneshot::Receiver<Result<RgbaImage, LoadImageErrorReason>>,
 }
 
 impl Drop for LoadImage {
@@ -125,7 +142,14 @@ impl Future for LoadImage {
         Pin::new(&mut self.rx).poll(cx).map(|result| {
             // the sender can only be dropped if the callbacks are dropped and those are in
             // this future.
-            result.expect("sender dropped")
+            result.expect("sender dropped").map_err(|reason| {
+                let error = LoadImageError {
+                    url: self.url.clone(),
+                    reason,
+                };
+                tracing::error!(url = %self.url, ?error, "image load failed");
+                error
+            })
         })
     }
 }

@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::atlas::AtlasBuilderId;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     #[serde(default)]
@@ -30,13 +30,14 @@ pub struct Manifest {
     pub shaders: HashMap<AssetId, Shader>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mesh {
     pub label: Option<String>,
+    pub mesh: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Texture {
     pub label: Option<String>,
@@ -44,13 +45,6 @@ pub struct Texture {
     pub atlas: Option<AtlasDef>,
     pub convert_to: Option<ImageFormat>,
     pub scale_to: Option<ScaleTo>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub enum AtlasDef {
-    Flag(bool),
-    Named(String),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -94,9 +88,16 @@ impl From<ScaleFilter> for image::imageops::FilterType {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AtlasDef {
+    Flag(bool),
+    Named(String),
+}
+
 impl Default for AtlasDef {
     fn default() -> Self {
-        Self::Flag(true)
+        Self::Flag(false)
     }
 }
 
@@ -110,36 +111,41 @@ impl From<AtlasDef> for Option<AtlasBuilderId> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Material {
     pub label: Option<String>,
+    pub ambient: Option<AssetIdOrInline<Texture>>,
+    pub diffuse: Option<AssetIdOrInline<Texture>>,
+    pub specular: Option<AssetIdOrInline<Texture>>,
+    pub normal: Option<AssetIdOrInline<Texture>>,
+    pub shininess: Option<AssetIdOrInline<Texture>>,
+    pub dissolve: Option<AssetIdOrInline<Texture>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
     pub label: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sound {
     pub label: Option<String>,
     pub path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
-pub enum TextureRef {
-    Ident(String),
-    Texture { texture: String },
-    Path { path: PathBuf },
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Shader {
     pub label: Option<String>,
     pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AssetIdOrInline<T> {
+    AssetId(AssetId),
+    Inline(T),
 }

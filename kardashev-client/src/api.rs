@@ -16,6 +16,7 @@ use kardashev_protocol::{
 use url::Url;
 
 use crate::{
+    add_trailing_slash,
     Error,
     UrlExt,
 };
@@ -27,8 +28,12 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    pub fn new(api_url: Url) -> Self {
+    pub fn new(mut api_url: Url) -> Self {
         let client = reqwest::Client::new();
+
+        // the trailing slash is important for `Url::join` to work properly
+        add_trailing_slash(&mut api_url);
+
         Self {
             client,
             api_url: Arc::new(api_url),

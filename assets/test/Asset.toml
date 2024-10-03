@@ -1,0 +1,3 @@
+[materials.796e953f-3985-4cc2-994b-ff74aaba2fe9]
+label = "test01"
+diffuse = { path = "test01.png" }

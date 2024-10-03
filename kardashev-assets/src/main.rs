@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod atlas;
+mod build_info;
 mod processor;
 mod source;
 
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::Error;
+pub use kardashev_protocol::assets as dist;
 use uuid::Uuid;
 
 use crate::processor::Processor;

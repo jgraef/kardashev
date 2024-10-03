@@ -84,7 +84,7 @@ impl AssetServer {
 
         Load {
             asset_id,
-            rx: Some(rx),
+            state: LoadState::Wait { rx },
         }
     }
 
@@ -118,23 +118,34 @@ pub trait Asset: Sized + Send + Sync + 'static {
 /// component, and can be attached to entities. The [`AssetLoaderSystem`] will
 /// then check if the load is complete, remove the [`Load`] and attach the
 /// loaded asset to the entity.
+///
+/// # TODO
+///
+/// Document panic behavior
 #[derive(Debug)]
 pub struct Load<A: Asset> {
     asset_id: AssetId,
-    rx: Option<oneshot::Receiver<Result<A, <A as Asset>::LoadError>>>,
+    state: LoadState<A>,
 }
 
 impl<A: Asset> Load<A> {
+    pub fn new(asset_id: AssetId) -> Self {
+        Self {
+            asset_id,
+            state: LoadState::New,
+        }
+    }
+
     pub fn asset_id(&self) -> AssetId {
         self.asset_id
     }
 
     pub fn try_get(&mut self) -> Option<Result<A, <A as Asset>::LoadError>> {
-        self.rx
-            .as_mut()
-            .expect("load request result was already taken out")
-            .try_recv()
-            .expect("asset load request sender dropped")
+        match &mut self.state {
+            LoadState::New => None,
+            LoadState::Wait { rx } => rx.try_recv().expect("asset load request sender dropped"),
+            LoadState::Done => panic!("load request result was already taken out"),
+        }
     }
 }
 
@@ -142,12 +153,26 @@ impl<A: Asset> Future for Load<A> {
     type Output = Result<A, <A as Asset>::LoadError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.rx
-            .as_mut()
-            .expect("future already returned result")
-            .poll_unpin(cx)
-            .map(|result| result.expect("asset load request sender dropped"))
+        match &mut self.state {
+            LoadState::New => panic!("load request wasn't started yet"),
+            LoadState::Wait { rx } => {
+                rx.poll_unpin(cx).map(|result| {
+                    self.state = LoadState::Done;
+                    result.expect("asset load request sender dropped")
+                })
+            }
+            LoadState::Done => panic!("load request result was already taken out"),
+        }
     }
+}
+
+#[derive(Debug)]
+enum LoadState<A: Asset> {
+    New,
+    Wait {
+        rx: oneshot::Receiver<Result<A, <A as Asset>::LoadError>>,
+    },
+    Done,
 }
 
 #[derive(Debug)]
@@ -216,6 +241,7 @@ impl Reactor {
                 load_request.load(&mut loader).await;
             }
             Command::RegisterAssetType { asset_type } => {
+                tracing::debug!(?asset_type, "registering asset type");
                 self.metadata.register_asset_type_dyn(asset_type);
             }
         }
@@ -371,8 +397,17 @@ impl System for AssetLoaderSystem {
             return Ok(());
         };
 
+        let asset_server = context
+            .resources
+            .get::<AssetServer>()
+            .expect("AssetServer resource missing");
+
         for asset_type in &asset_type_registry.asset_types {
-            asset_type.loader_system(&mut context.world, &mut self.command_buffer);
+            tracing::trace!(
+                asset_type = asset_type.asset_type_name(),
+                "running asset loader system"
+            );
+            asset_type.loader_system(asset_server, &mut context.world, &mut self.command_buffer);
         }
 
         // note: we use our own command buffer so that loaded assets are already
@@ -482,6 +517,7 @@ trait DynAssetTypeTrait {
     fn parse_dist_manifest(&self, manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>);
     fn loader_system<'w>(
         &self,
+        asset_server: &AssetServer,
         world: &'w mut hecs::World,
         command_buffer: &'w mut hecs::CommandBuffer,
     );
@@ -502,23 +538,39 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
 
     fn loader_system<'w>(
         &self,
+        asset_server: &AssetServer,
         world: &'w mut hecs::World,
         command_buffer: &'w mut hecs::CommandBuffer,
     ) {
         let query = world.query_mut::<hecs::Without<&mut Load<A>, &A>>();
 
         for (entity, load) in query {
-            match load.try_get() {
-                None => {}
-                Some(Ok(asset)) => {
-                    tracing::debug!(asset_id = %load.asset_id, "asset loaded");
-                    command_buffer.insert_one(entity, asset);
-                    command_buffer.remove_one::<Load<A>>(entity);
+            match &mut load.state {
+                LoadState::New => {
+                    let (tx, rx) = oneshot::channel();
+                    asset_server.send_command(Command::Load {
+                        load_request: DynAssetLoadRequest::new(load.asset_id, tx),
+                    });
+                    load.state = LoadState::Wait { rx };
                 }
-                Some(Err(error)) => {
-                    tracing::error!(asset_id = %load.asset_id, ?error, "failed to load asset");
-                    command_buffer.remove_one::<Load<A>>(entity);
+                LoadState::Wait { rx } => {
+                    if let Some(result) = rx.try_recv().expect("asset load request sender dropped")
+                    {
+                        match result {
+                            Ok(asset) => {
+                                tracing::debug!(asset_id = %load.asset_id, "asset loaded");
+                                command_buffer.insert_one(entity, asset);
+                            }
+                            Err(error) => {
+                                tracing::error!(asset_id = %load.asset_id, ?error, "failed to load asset");
+                            }
+                        }
+
+                        command_buffer.remove_one::<Load<A>>(entity);
+                        load.state = LoadState::Done;
+                    }
                 }
+                LoadState::Done => panic!("load request result was already taken out"),
             }
         }
     }

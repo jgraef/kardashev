@@ -11,6 +11,8 @@ use serde::{
     Deserialize,
     Serialize,
 };
+/// re-export for the `asset_id!` macro
+pub use uuid;
 
 use crate::model::star::Star;
 

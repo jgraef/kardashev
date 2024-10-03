@@ -37,3 +37,11 @@ impl UrlExt for Url {
         self
     }
 }
+
+fn add_trailing_slash(url: &mut Url) {
+    if let Some(segments) = url.path_segments() {
+        if segments.last().map_or(true, |last| !last.is_empty()) {
+            url.path_segments_mut().unwrap().push("");
+        }
+    }
+}
