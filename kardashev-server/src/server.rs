@@ -5,6 +5,7 @@ use std::{
         DerefMut,
     },
     path::PathBuf,
+    time::Duration,
 };
 
 use axum::{
@@ -25,58 +26,70 @@ use sqlx::{
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
-use tower_http::{
-    services::{
-        ServeDir,
-        ServeFile,
-    },
-    trace::{
-        DefaultOnRequest,
-        DefaultOnResponse,
-        TraceLayer,
-    },
+use tower_http::trace::{
+    DefaultOnRequest,
+    DefaultOnResponse,
+    TraceLayer,
 };
 
 use crate::{
     api,
-    assets::AssetConfig,
     error::Error,
+    util::ui::UiConfig,
 };
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    assets: Option<AssetConfig>,
-    ui_path: Option<PathBuf>,
+    assets: Option<kardashev_assets::server::Config>,
+    ui: Option<UiConfig>,
 }
 
 impl Config {
     pub fn cargo() -> Self {
         let workspace_path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR")).join("..");
 
-        let ui_path = workspace_path
+        let ui_source_path = workspace_path
+            .join("kardashev-ui")
+            .canonicalize()
+            .expect("Could not get absolute path for UI");
+
+        let ui_dist_path = workspace_path
             .join("kardashev-ui")
             .join("dist")
             .canonicalize()
             .expect("Could not get absolute path for UI");
 
-        let source_path = workspace_path
+        let asset_source_path = workspace_path
             .join("assets")
-            .join("dist")
+            .join("source")
             .canonicalize()
             .expect("Could not get absolute path for assets");
 
-        let dist_path = workspace_path
+        let asset_dist_path = workspace_path
             .join("assets")
             .join("dist")
             .canonicalize()
             .expect("Could not get absolute path for assets");
 
         Self {
-            assets: Some(AssetConfig {
-                source_path,
-                dist_path,
+            assets: Some(kardashev_assets::server::Config {
+                source_path: asset_source_path,
+                dist_path: asset_dist_path,
+                watch: Some(kardashev_assets::server::WatchConfig {
+                    debounce: Duration::from_secs(1),
+                }),
             }),
-            ui_path: Some(ui_path),
+            ui: Some(UiConfig::Trunk {
+                source_path: ui_source_path,
+                dist_path: ui_dist_path,
+            }),
+        }
+    }
+
+    pub fn api_only() -> Self {
+        Self {
+            assets: None,
+            ui: None,
         }
     }
 }
@@ -92,20 +105,18 @@ impl Server {
         sqlx::migrate!("../migrations").run(&db).await?;
 
         let shutdown = CancellationToken::new();
-
+        let mut rebuild_assets = None;
         let mut router = Router::new().nest("/api/v0", api::router());
 
         if let Some(asset_config) = &config.assets {
-            router = router.nest_service(
-                "/assets",
-                crate::assets::router(asset_config, shutdown.clone())?,
-            );
+            let asset_server =
+                kardashev_assets::server::Server::new(asset_config, shutdown.clone()).await?;
+            router = router.nest_service("/assets", asset_server.router);
+            rebuild_assets = Some(asset_server.trigger);
         }
 
-        if let Some(ui_path) = &config.ui_path {
-            router = router.fallback_service(ServeDir::new(&ui_path).fallback(
-                ServeFile::new_with_mime(ui_path.join("index.html"), &mime::TEXT_HTML_UTF_8),
-            ));
+        if let Some(ui_config) = &config.ui {
+            router = router.fallback_service(crate::util::ui::router(ui_config).await?);
         }
 
         let router = router
@@ -132,6 +143,7 @@ impl Server {
                 shutdown: shutdown.clone(),
                 db,
                 up_since: Utc::now(),
+                rebuild_assets,
             });
 
         Ok(Self { router, shutdown })
@@ -151,13 +163,8 @@ impl Server {
 pub struct Context {
     pub shutdown: CancellationToken,
     pub up_since: DateTime<Utc>,
+    pub rebuild_assets: Option<kardashev_assets::server::Trigger>,
     db: PgPool,
-}
-
-impl Context {
-    pub fn shutdown(&self) {
-        self.shutdown.cancel();
-    }
 }
 
 impl Context {

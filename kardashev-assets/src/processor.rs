@@ -30,7 +30,10 @@ use crate::{
         AtlasBuilder,
         AtlasBuilderId,
     },
-    build_info::BuildInfo,
+    build_info::{
+        BuildInfo,
+        CompressionFormat,
+    },
     dist,
     source::Manifest,
     texture::UnfinishedTexture,
@@ -44,8 +47,8 @@ pub struct Processor {
     asset_types: Vec<DynAssetType>,
     source: Source,
     dist_path: PathBuf,
-    dist_manifest: dist::Manifest,
     build_info: BuildInfo,
+    precompress: HashSet<CompressionFormat>,
 }
 
 impl Processor {
@@ -53,8 +56,6 @@ impl Processor {
         use crate::source;
 
         let dist_path = dist_path.as_ref();
-        std::fs::create_dir_all(dist_path)?;
-
         let build_info_path = dist_path.join("build_info.json");
         let build_info = build_info_path
             .exists()
@@ -74,13 +75,17 @@ impl Processor {
             ],
             source: Source::default(),
             dist_path: dist_path.to_owned(),
-            dist_manifest: dist::Manifest::default(),
             build_info,
+            precompress: HashSet::new(),
         })
     }
 
     pub fn register_asset_type<A: Asset>(&mut self) {
         self.asset_types.push(DynAssetType::new::<A>());
+    }
+
+    pub fn precompress(&mut self, format: CompressionFormat) {
+        self.precompress.insert(format);
     }
 
     pub fn add_directory(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
@@ -128,6 +133,26 @@ impl Processor {
         let mut changed = HashSet::new();
         let mut atlas_builders = HashMap::new();
 
+        // create dist path, if it doesn't exist already
+        std::fs::create_dir_all(&self.dist_path)?;
+
+        // load dist manifest if it exists
+        let path = self.dist_path.join("assets.json");
+        let mut dist_assets = path
+            .exists()
+            .then(|| {
+                let reader = BufReader::new(File::open(&path)?);
+                let dist_manifest: dist::Manifest = serde_json::from_reader(reader)?;
+                let mut dist_asset_types = dist::AssetTypes::default();
+                dist_asset_types.with_builtin();
+                for asset_type in &self.asset_types {
+                    asset_type.register_dist_type(&mut dist_asset_types);
+                }
+                Ok::<_, Error>(dist_manifest.assets.parse(&dist_asset_types)?)
+            })
+            .transpose()?
+            .unwrap_or_default();
+
         for (path, manifest) in &self.source.manifests {
             tracing::info!(path = %path.display(), "processing manifest file");
 
@@ -139,29 +164,50 @@ impl Processor {
                         manifest_path: &path,
                         source: &self.source,
                         dist_path: &self.dist_path,
-                        dist_manifest: &mut self.dist_manifest,
+                        dist_assets: &mut dist_assets,
                         build_info: &mut self.build_info,
                         atlas_builders: &mut atlas_builders,
                         build_time,
                         processed: &mut processed,
                         changed: &mut changed,
+                        precompress: &self.precompress,
                     };
                     asset_type.process(&mut context, id)?;
                 }
             }
         }
 
+        // remove assets that were not generated this time
+        let dist_asset_ids = dist_assets.all_asset_ids().collect::<Vec<_>>();
+        for asset_id in dist_asset_ids {
+            if !processed.contains(&asset_id) {
+                tracing::info!(%asset_id, "removing old asset");
+                dist_assets.remove(asset_id);
+            }
+        }
+
+        // collect files from dist manifest
+        let mut files = dist_assets
+            .all_files()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<HashSet<_>>();
+
+        // add texture atlasses
+        // todo: texture atlasses should become an (source) asset that just creates a
+        // texture asset
         for (atlas_builder_id, atlas_builder) in atlas_builders {
             tracing::info!(%atlas_builder_id, "building texture atlas");
 
             let atlas = atlas_builder.finish()?;
             let filename = format!("atlas_{atlas_builder_id}.png");
+            files.insert(PathBuf::from(&filename));
             let path = self.dist_path.join(&filename);
             let mut writer = BufWriter::new(File::create(&path)?);
             atlas.image.write_to(&mut writer, ImageFormat::Png)?;
 
             for (data, crop) in atlas.allocations {
-                self.dist_manifest.textures.push(dist::Texture {
+                dist_assets.insert(dist::Texture {
                     id: data.id,
                     image: filename.clone(),
                     label: data.label,
@@ -176,15 +222,33 @@ impl Processor {
             }
         }
 
+        // write dist manifest
+        let dist_manifest = dist::Manifest {
+            build_time,
+            assets: dist_assets.blob(),
+        };
+        files.insert(PathBuf::from("assets.json"));
         let path = self.dist_path.join("assets.json");
         tracing::info!(path = %path.display(), "writing dist manifest");
-        let writer = BufWriter::new(File::create(path)?);
-        serde_json::to_writer_pretty(writer, &self.dist_manifest)?;
+        let writer = BufWriter::new(File::create(&path)?);
+        serde_json::to_writer_pretty(writer, &dist_manifest)?;
 
+        // write build info
+        files.insert(PathBuf::from("build_info.json"));
         let path = self.dist_path.join("build_info.json");
         tracing::info!(path = %path.display(), "writing build info");
-        let writer = BufWriter::new(File::create(path)?);
+        let writer = BufWriter::new(File::create(&path)?);
         serde_json::to_writer_pretty(writer, &self.build_info)?;
+
+        // cleanup files
+        for result in std::fs::read_dir(&self.dist_path)? {
+            let entry = result?;
+            let filename = PathBuf::from(entry.file_name());
+            if !files.contains(&filename) {
+                tracing::info!(file = %filename.display(), "cleaning up file");
+            }
+        }
+        // todo
 
         Ok(Processed { changed })
     }
@@ -214,12 +278,13 @@ pub struct ProcessContext<'a> {
     pub manifest_path: &'a Path,
     pub source: &'a Source,
     pub dist_path: &'a Path,
-    pub dist_manifest: &'a mut dist::Manifest,
+    pub dist_assets: &'a mut dist::Assets,
     pub build_info: &'a mut BuildInfo,
     pub atlas_builders: &'a mut HashMap<AtlasBuilderId, AtlasBuilder<UnfinishedTexture>>,
     pub build_time: DateTime<Utc>,
     pub processed: &'a mut HashSet<AssetId>,
     pub changed: &'a mut HashSet<AssetId>,
+    pub precompress: &'a HashSet<CompressionFormat>,
 }
 
 impl<'a> ProcessContext<'a> {
@@ -262,6 +327,39 @@ impl<'a> ProcessContext<'a> {
             true
         }
     }
+
+    pub fn precompress(&mut self, filename: &str) -> Result<(), Error> {
+        for &format in self.precompress {
+            let _compressed = compress(format, &self.dist_path, filename)?;
+            // todo
+            //self.build_info
+            //    .precompressed
+            //    .insert(filename.to_owned(), Precompressed { format,
+            // compressed });
+        }
+        Ok(())
+    }
+}
+
+fn compress(
+    format: CompressionFormat,
+    dist_path: impl AsRef<Path>,
+    filename: &str,
+) -> Result<String, Error> {
+    let dist_path = dist_path.as_ref();
+    tracing::debug!(filename, ?format, "compressing");
+
+    Ok(match format {
+        CompressionFormat::Gzip => {
+            let compressed = format!("{filename}.gz");
+            let mut writer = libflate::gzip::Encoder::new(BufWriter::new(File::create(
+                dist_path.join(&compressed),
+            )?))?;
+            let mut reader = BufReader::new(File::open(dist_path.join(&filename))?);
+            std::io::copy(&mut reader, &mut writer)?;
+            compressed
+        }
+    })
 }
 
 pub fn file_modified_timestamp(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
@@ -309,6 +407,7 @@ trait DynAssetTypeTrait {
         context: &'a mut ProcessContext<'b>,
         asset_id: AssetId,
     ) -> Result<(), Error>;
+    fn register_dist_type(&self, dist_asset_types: &mut dist::AssetTypes);
 }
 
 struct DynAssetTypeImpl<A: Asset> {
@@ -331,5 +430,9 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
     ) -> Result<(), Error> {
         let asset = context.source.get_asset::<A>(id).unwrap();
         asset.process(id, context)
+    }
+
+    fn register_dist_type(&self, dist_asset_types: &mut dist::AssetTypes) {
+        A::register_dist_type(dist_asset_types);
     }
 }

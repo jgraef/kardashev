@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+#[cfg(feature = "server")]
+mod server;
+
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+};
 
 use clap::Parser;
 use color_eyre::eyre::Error;
@@ -20,6 +26,23 @@ pub enum Args {
         #[arg(long, env = "DIST", default_value = "./assets/dist")]
         dist: PathBuf,
     },
+    #[cfg(feature = "server")]
+    Serve {
+        #[arg(long, env = "ASSETS", default_value = "./assets/source")]
+        assets: PathBuf,
+
+        #[arg(long, env = "DIST", default_value = "./assets/dist")]
+        dist: PathBuf,
+
+        #[arg(long)]
+        watch: bool,
+
+        #[arg(long, default_value = "1000")]
+        watch_debounce: u64,
+
+        #[arg(short, long, default_value = "127.0.0.1:3001")]
+        address: SocketAddr,
+    },
 }
 
 #[tokio::main]
@@ -37,6 +60,16 @@ async fn main() -> Result<(), Error> {
         }
         Args::Build { assets, dist } => {
             process(&assets, &dist)?;
+        }
+        #[cfg(feature = "server")]
+        Args::Serve {
+            assets,
+            dist,
+            watch,
+            watch_debounce,
+            address,
+        } => {
+            crate::server::server(assets, dist, watch, watch_debounce, address).await?;
         }
     }
 

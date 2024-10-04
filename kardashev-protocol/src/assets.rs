@@ -1,14 +1,40 @@
-use std::fmt::Display;
+use std::{
+    any::{
+        type_name,
+        Any,
+        TypeId,
+    },
+    borrow::Cow,
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    fmt::{
+        Debug,
+        Display,
+    },
+    hash::Hash,
+    marker::PhantomData,
+    ops::Deref,
+};
 
 use bytemuck::{
     Pod,
     Zeroable,
 };
+use chrono::{
+    DateTime,
+    Utc,
+};
 use serde::{
+    de::DeserializeOwned,
     Deserialize,
     Serialize,
 };
-use uuid::Uuid;
+use uuid::{
+    uuid,
+    Uuid,
+};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(transparent)]
@@ -38,19 +64,10 @@ macro_rules! asset_id {
     };
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub textures: Vec<Texture>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub materials: Vec<Material>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub meshes: Vec<Mesh>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub shaders: Vec<Shader>,
+    pub build_time: DateTime<Utc>,
+    pub assets: AssetsBlob,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -72,6 +89,19 @@ pub struct Texture {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v_edge_mode: Option<TextureEdgeMode>,
+}
+
+impl Asset for Texture {
+    const TYPE_NAME: &'static str = "texture";
+    const TYPE_ID: Uuid = uuid!("f4c83063-accc-4565-82a9-04df9582ec69");
+
+    fn id(&self) -> AssetId {
+        self.id
+    }
+
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        std::iter::once(&*self.image)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -122,6 +152,19 @@ pub struct Material {
     pub dissolve: Option<AssetId>,
 }
 
+impl Asset for Material {
+    const TYPE_NAME: &'static str = "material";
+    const TYPE_ID: Uuid = uuid!("ec98ef77-e2ce-4cc8-baf2-28cf53b88171");
+
+    fn id(&self) -> AssetId {
+        self.id
+    }
+
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        std::iter::empty()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mesh {
     pub id: AssetId,
@@ -132,26 +175,17 @@ pub struct Mesh {
     pub label: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Message {
-    Changed { asset_ids: Vec<AssetId> },
-}
+impl Asset for Mesh {
+    const TYPE_NAME: &'static str = "mesh";
+    const TYPE_ID: Uuid = uuid!("15668e5b-73aa-4895-8c70-3cf0346251eb");
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Shader {
-    pub id: AssetId,
+    fn id(&self) -> AssetId {
+        self.id
+    }
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-
-    pub naga_ir: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CompiledShader {
-    pub label: Option<String>,
-    pub module: naga::Module,
-    pub module_info: naga::valid::ModuleInfo,
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        std::iter::once(&*self.mesh)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,4 +210,270 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub tex_coords: [f32; 2],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Event {
+    Changed { asset_ids: Vec<AssetId> },
+    Lagged,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Shader {
+    pub id: AssetId,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+
+    pub naga_ir: String,
+}
+
+impl Asset for Shader {
+    const TYPE_NAME: &'static str = "shader";
+    const TYPE_ID: Uuid = uuid!("ae943412-b95a-4097-8441-6e5a58905655");
+
+    fn id(&self) -> AssetId {
+        self.id
+    }
+
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        std::iter::once(&*self.naga_ir)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompiledShader {
+    pub label: Option<String>,
+    pub module: naga::Module,
+    pub module_info: naga::valid::ModuleInfo,
+}
+
+pub trait Asset: Serialize + DeserializeOwned + 'static {
+    const TYPE_NAME: &'static str;
+    const TYPE_ID: Uuid;
+
+    fn id(&self) -> AssetId;
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str>;
+}
+
+#[derive(Default)]
+pub struct Assets {
+    assets: HashMap<AssetId, (Box<dyn Any>, DynAssetType)>,
+    unrecognized: Vec<AssetBlob>,
+}
+
+impl Assets {
+    pub fn get<A: Asset>(&self, asset_id: AssetId) -> Option<&A> {
+        let asset = &self.assets.get(&asset_id)?.0;
+        asset.downcast_ref()
+    }
+
+    pub fn insert<A: Asset>(&mut self, asset: A) {
+        self.assets
+            .insert(asset.id(), (Box::new(asset), DynAssetType::new::<A>()));
+    }
+
+    pub fn blob(&self) -> AssetsBlob {
+        let mut blob = AssetsBlob::default();
+        for (id, (asset, asset_type)) in &self.assets {
+            let data = asset_type.serialize(&**asset).unwrap_or_else(|error| {
+                panic!(
+                    "Failed to serialize asset ({:?}): {error}",
+                    asset_type.asset_type()
+                )
+            });
+            blob.list.push(AssetBlob {
+                id: *id,
+                r#type: asset_type.asset_type(),
+                data,
+            });
+        }
+        blob
+    }
+
+    pub fn unrecognized_types(&self) -> HashSet<&AssetType> {
+        self.unrecognized.iter().map(|blob| &blob.r#type).collect()
+    }
+
+    pub fn all_files(&self) -> HashSet<&str> {
+        let mut files = HashSet::new();
+        for (asset, asset_type) in self.assets.values() {
+            asset_type.collect_files(&**asset, &mut files);
+        }
+        files
+    }
+
+    pub fn all_asset_ids(&self) -> impl Iterator<Item = AssetId> + '_ {
+        self.assets.keys().copied()
+    }
+
+    pub fn remove(&mut self, asset_id: AssetId) {
+        self.assets.remove(&asset_id);
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AssetType {
+    pub id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<Cow<'static, str>>,
+}
+
+impl Eq for AssetType {}
+
+impl PartialEq for AssetType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Hash for AssetType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("asset parse error")]
+pub struct AssetParseError {
+    #[source]
+    pub source: serde_json::Error,
+    pub asset_type: AssetType,
+    pub asset_id: AssetId,
+}
+
+impl Debug for Assets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assets").finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AssetTypes {
+    types: HashMap<Uuid, DynAssetType>,
+}
+
+impl AssetTypes {
+    pub fn register<A: Asset>(&mut self) -> &mut Self {
+        tracing::debug!(id = %A::TYPE_ID, name = A::TYPE_NAME, r#type = type_name::<A>(), "register asset type");
+        self.types.insert(A::TYPE_ID, DynAssetType::new::<A>());
+        self
+    }
+
+    pub fn with_builtin(&mut self) -> &mut Self {
+        self.register::<Texture>();
+        self.register::<Material>();
+        self.register::<Mesh>();
+        self.register::<Shader>();
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AssetsBlob {
+    list: Vec<AssetBlob>,
+}
+
+impl AssetsBlob {
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    pub fn parse(self, asset_types: &AssetTypes) -> Result<Assets, AssetParseError> {
+        let mut assets = Assets::default();
+
+        for asset in self.list {
+            if let Some(asset_type) = asset_types.types.get(&asset.r#type.id) {
+                assets.assets.insert(
+                    asset.id,
+                    (
+                        asset_type.deserialize(&asset.data).map_err(|source| {
+                            AssetParseError {
+                                source,
+                                asset_type: asset_type.asset_type(),
+                                asset_id: asset.id,
+                            }
+                        })?,
+                        *asset_type,
+                    ),
+                );
+            }
+            else {
+                assets.unrecognized.push(asset);
+            }
+        }
+
+        Ok(assets)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct AssetBlob {
+    id: AssetId,
+    r#type: AssetType,
+    data: serde_json::Value,
+}
+
+#[derive(Clone, Copy)]
+struct DynAssetType {
+    inner: &'static dyn DynAssetTypeTrait,
+}
+
+impl Debug for DynAssetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DynAssetType")
+            .field("asset_type", &self.inner.asset_type())
+            .finish()
+    }
+}
+
+impl DynAssetType {
+    pub fn new<A: Asset>() -> Self {
+        Self {
+            inner: &DynAssetTypeImpl {
+                _ty: PhantomData::<A>,
+            },
+        }
+    }
+}
+
+impl Deref for DynAssetType {
+    type Target = dyn DynAssetTypeTrait;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+trait DynAssetTypeTrait {
+    fn asset_type(&self) -> AssetType;
+    fn serialize(&self, asset: &dyn Any) -> Result<serde_json::Value, serde_json::Error>;
+    fn deserialize(&self, data: &serde_json::Value) -> Result<Box<dyn Any>, serde_json::Error>;
+    fn collect_files<'a>(&self, asset: &'a dyn Any, files: &mut HashSet<&'a str>);
+}
+
+struct DynAssetTypeImpl<A> {
+    _ty: PhantomData<A>,
+}
+
+impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
+    fn asset_type(&self) -> AssetType {
+        AssetType {
+            id: A::TYPE_ID,
+            name: Some(A::TYPE_NAME.into()),
+        }
+    }
+
+    fn serialize(&self, asset: &dyn Any) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::to_value(asset.downcast_ref::<A>().unwrap())
+    }
+
+    fn deserialize(&self, data: &serde_json::Value) -> Result<Box<dyn Any>, serde_json::Error> {
+        Ok(Box::new(A::deserialize(data)?))
+    }
+
+    fn collect_files<'a>(&self, asset: &'a dyn Any, files: &mut HashSet<&'a str>) {
+        files.extend(A::files(asset.downcast_ref::<A>().unwrap()));
+    }
 }

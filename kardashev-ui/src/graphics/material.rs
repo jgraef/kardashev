@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use kardashev_protocol::assets::{
     self as dist,
@@ -49,16 +46,6 @@ impl Asset for Material {
     type Dist = dist::Material;
     type LoadError = LoadMaterialError;
 
-    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
-        for (index, material) in manifest.materials.iter().enumerate() {
-            refs.insert(material.id, index);
-        }
-    }
-
-    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist> {
-        manifest.materials.get(index)
-    }
-
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
         loader: &'a mut Loader<'b>,
@@ -67,7 +54,10 @@ impl Asset for Material {
 
         // we don't use the cache for materials, since the textures are cached anyway
 
-        let metadata = loader.metadata.get::<Self>(asset_id)?;
+        let metadata = loader
+            .dist_assets
+            .get::<dist::Material>(asset_id)
+            .ok_or_else(|| AssetNotFound { asset_id })?;
 
         async fn load_material_texture<'a, 'b: 'a>(
             asset_id: Option<AssetId>,
@@ -82,7 +72,7 @@ impl Asset for Material {
         }
 
         let mut loader = Loader {
-            metadata: &loader.metadata,
+            dist_assets: &loader.dist_assets,
             client: &loader.client,
             cache: &mut loader.cache,
         };

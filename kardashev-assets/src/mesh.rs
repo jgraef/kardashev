@@ -21,6 +21,10 @@ use crate::{
 };
 
 impl Asset for Mesh {
+    fn register_dist_type(dist_asset_types: &mut dist::AssetTypes) {
+        dist_asset_types.register::<dist::Mesh>();
+    }
+
     fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
         &manifest.meshes
     }
@@ -48,7 +52,7 @@ impl Asset for Mesh {
         let filename = format!("{id}.mesh");
         std::fs::copy(&path, context.dist_path.join(&filename))?;
 
-        context.dist_manifest.meshes.push(dist::Mesh {
+        context.dist_assets.insert(dist::Mesh {
             id,
             mesh: filename,
             label: self.label.clone(),

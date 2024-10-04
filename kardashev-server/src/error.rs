@@ -5,5 +5,6 @@ pub enum Error {
     Sqlx(#[from] sqlx::Error),
     Io(#[from] std::io::Error),
     SqlxMigrate(#[from] sqlx::migrate::MigrateError),
-    NotifyAsync(#[from] notify_async::Error),
+    Assets(#[from] kardashev_assets::Error),
+    Trunk(#[from] crate::util::ui::TrunkError),
 }

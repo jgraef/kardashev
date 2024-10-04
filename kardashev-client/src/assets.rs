@@ -6,8 +6,8 @@ use bytes::{
 };
 use futures_util::TryStreamExt;
 use kardashev_protocol::assets::{
+    Event,
     Manifest,
-    Message,
 };
 use reqwest_websocket::{
     RequestBuilderExt,
@@ -113,7 +113,7 @@ pub struct Events {
 }
 
 impl Events {
-    pub async fn next(&mut self) -> Result<Message, Error> {
+    pub async fn next(&mut self) -> Result<Event, Error> {
         let message = self
             .websocket
             .try_next()

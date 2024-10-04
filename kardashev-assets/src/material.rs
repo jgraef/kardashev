@@ -18,6 +18,10 @@ use crate::{
 };
 
 impl Asset for Material {
+    fn register_dist_type(dist_asset_types: &mut dist::AssetTypes) {
+        dist_asset_types.register::<dist::Material>();
+    }
+
     fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
         &manifest.materials
     }
@@ -63,7 +67,6 @@ impl Asset for Material {
 
                 texture.process(texture_asset_id, &mut context)?;
                 is_fresh &= context.is_fresh_dependency(id, texture_asset_id);
-                context.build_info.add_dependency(id, texture_asset_id);
 
                 Ok(Some(texture_asset_id))
             }
@@ -84,7 +87,7 @@ impl Asset for Material {
             return Ok(());
         }
 
-        context.dist_manifest.materials.push(dist::Material {
+        context.dist_assets.insert(dist::Material {
             id,
             label: self.label.clone(),
             ambient,

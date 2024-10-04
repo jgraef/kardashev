@@ -55,12 +55,13 @@ pub enum Error {
     ImageLoad(#[from] image_load::LoadImageError),
     Graphics(#[from] crate::graphics::Error),
     Client(#[from] kardashev_client::Error),
+    AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("asset not found: {asset_id}")]
 pub struct AssetNotFound {
-    asset_id: AssetId,
+    pub asset_id: AssetId,
 }
 
 /// Handle to the asset server that loads assets.
@@ -101,10 +102,6 @@ impl AssetServer {
 pub trait Asset: Sized + Send + Sync + 'static {
     type Dist;
     type LoadError: std::error::Error + Send + Sync;
-
-    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>);
-
-    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist>;
 
     fn load<'a, 'b: 'a>(
         asset_id: AssetId,
@@ -178,7 +175,7 @@ enum LoadState<A: Asset> {
 #[derive(Debug)]
 struct Reactor {
     client: AssetClient,
-    metadata: Metadata,
+    assets: dist::Assets,
     cache: Cache,
     rx_command: mpsc::UnboundedReceiver<Command>,
 }
@@ -187,11 +184,17 @@ impl Reactor {
     fn spawn(client: AssetClient, rx_command: mpsc::UnboundedReceiver<Command>) {
         spawn_local_and_handle_error(async move {
             let manifest = client.get_manifest().await?;
-            let metadata = Metadata::from_manifest(manifest);
+
+            let mut dist_asset_types = dist::AssetTypes::default();
+            dist_asset_types.with_builtin();
+            let assets = manifest.assets.parse(&dist_asset_types)?;
+            for ty in assets.unrecognized_types() {
+                tracing::warn!("unrecognized asset type: {ty:?}");
+            }
 
             let reactor = Self {
                 client,
-                metadata,
+                assets,
                 cache: Cache::default(),
                 rx_command,
             };
@@ -209,7 +212,7 @@ impl Reactor {
             .ok();
         async fn next_event(
             events: &mut Option<Events>,
-        ) -> Result<dist::Message, kardashev_client::Error> {
+        ) -> Result<dist::Event, kardashev_client::Error> {
             if let Some(events) = events {
                 events.next().await
             }
@@ -240,21 +243,21 @@ impl Reactor {
                 let mut loader = Loader::from_reactor(self);
                 load_request.load(&mut loader).await;
             }
-            Command::RegisterAssetType { asset_type } => {
-                tracing::debug!(?asset_type, "registering asset type");
-                self.metadata.register_asset_type_dyn(asset_type);
+            Command::RegisterAssetType { asset_type: _ } => {
+                // todo
             }
         }
 
         Ok(())
     }
 
-    async fn handle_event(&mut self, event: dist::Message) -> Result<(), Error> {
+    async fn handle_event(&mut self, event: dist::Event) -> Result<(), Error> {
         match event {
-            dist::Message::Changed { asset_ids } => {
+            dist::Event::Changed { asset_ids } => {
                 tracing::debug!(?asset_ids, "assets changed");
                 // todo: the specified asset was changed and can be reloaded
             }
+            dist::Event::Lagged => {}
         }
 
         Ok(())
@@ -267,43 +270,10 @@ enum Command {
     RegisterAssetType { asset_type: DynAssetType },
 }
 
-#[derive(Debug)]
-pub struct Metadata {
-    manifest: dist::Manifest,
-    refs: HashMap<AssetId, usize>,
-}
-
-impl Metadata {
-    fn from_manifest(manifest: dist::Manifest) -> Self {
-        Self {
-            manifest,
-            refs: HashMap::new(),
-        }
-    }
-
-    fn register_asset_type<A: Asset>(&mut self) {
-        self.register_asset_type_dyn(DynAssetType::new::<A>());
-    }
-
-    fn register_asset_type_dyn(&mut self, asset_type: DynAssetType) {
-        asset_type.parse_dist_manifest(&self.manifest, &mut self.refs);
-    }
-
-    pub fn get<A: Asset>(&self, asset_id: AssetId) -> Result<&A::Dist, AssetNotFound> {
-        let index = self
-            .refs
-            .get(&asset_id)
-            .copied()
-            .ok_or_else(|| AssetNotFound { asset_id })?;
-
-        A::get_from_dist_manifest(&self.manifest, index).ok_or_else(|| AssetNotFound { asset_id })
-    }
-}
-
 /// Context for [`Asset::load`]
 #[derive(Debug)]
 pub struct Loader<'a> {
-    pub metadata: &'a Metadata,
+    pub dist_assets: &'a dist::Assets,
     pub client: &'a AssetClient,
     pub cache: &'a mut Cache,
 }
@@ -311,7 +281,7 @@ pub struct Loader<'a> {
 impl<'a> Loader<'a> {
     fn from_reactor(reactor: &'a mut Reactor) -> Self {
         Self {
-            metadata: &reactor.metadata,
+            dist_assets: &reactor.assets,
             client: &reactor.client,
             cache: &mut reactor.cache,
         }
@@ -514,7 +484,6 @@ impl Debug for DynAssetType {
 
 trait DynAssetTypeTrait {
     fn asset_type_name(&self) -> &'static str;
-    fn parse_dist_manifest(&self, manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>);
     fn loader_system<'w>(
         &self,
         asset_server: &AssetServer,
@@ -530,10 +499,6 @@ struct DynAssetTypeImpl<A> {
 impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
     fn asset_type_name(&self) -> &'static str {
         type_name::<A>()
-    }
-
-    fn parse_dist_manifest(&self, manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
-        A::parse_dist_manifest(manifest, refs);
     }
 
     fn loader_system<'w>(

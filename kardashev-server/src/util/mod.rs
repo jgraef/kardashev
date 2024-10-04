@@ -1,6 +1,7 @@
 use tokio_util::sync::CancellationToken;
 
 pub mod sqlx;
+pub mod ui;
 
 pub fn graceful_shutdown(shutdown: CancellationToken) {
     tokio::spawn(async move {

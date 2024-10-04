@@ -1,10 +1,7 @@
 //pub mod teapot;
 pub mod shape;
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use kardashev_client::DownloadError;
 use kardashev_protocol::assets::{
@@ -39,21 +36,14 @@ impl Asset for Mesh {
     type Dist = dist::Mesh;
     type LoadError = MeshLoadError;
 
-    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
-        for (index, mesh) in manifest.meshes.iter().enumerate() {
-            refs.insert(mesh.id, index);
-        }
-    }
-
-    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist> {
-        manifest.meshes.get(index)
-    }
-
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
         loader: &'a mut Loader<'b>,
     ) -> Result<Self, MeshLoadError> {
-        let metadata = loader.metadata.get::<Self>(asset_id)?;
+        let metadata = loader
+            .dist_assets
+            .get::<dist::Mesh>(asset_id)
+            .ok_or_else(|| AssetNotFound { asset_id })?;
 
         let mesh_data = loader
             .cache

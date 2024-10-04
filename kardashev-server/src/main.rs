@@ -1,5 +1,4 @@
 mod api;
-mod assets;
 mod error;
 mod server;
 mod util;

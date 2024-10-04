@@ -23,6 +23,10 @@ use crate::{
 };
 
 impl Asset for Texture {
+    fn register_dist_type(dist_asset_types: &mut dist::AssetTypes) {
+        dist_asset_types.register::<dist::Texture>();
+    }
+
     fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
         &manifest.textures
     }
@@ -97,7 +101,7 @@ impl Asset for Texture {
             let mut writer = BufWriter::new(File::create(&path)?);
             image.write_to(&mut writer, ImageFormat::Png)?;
 
-            context.dist_manifest.textures.push(dist::Texture {
+            context.dist_assets.insert(dist::Texture {
                 id,
                 image: filename.clone(),
                 label: self.label.clone(),

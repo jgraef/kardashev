@@ -18,6 +18,10 @@ use crate::{
 };
 
 impl Asset for Shader {
+    fn register_dist_type(dist_asset_types: &mut dist::AssetTypes) {
+        dist_asset_types.register::<dist::Shader>();
+    }
+
     fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self> {
         &manifest.shaders
     }
@@ -58,7 +62,7 @@ impl Asset for Shader {
                 //serde_json::to_writer_pretty(writer, &compiled)?;
                 rmp_serde::encode::write(&mut writer, &compiled)?;
 
-                context.dist_manifest.shaders.push(dist::Shader {
+                context.dist_assets.insert(dist::Shader {
                     id,
                     label: self.label.clone(),
                     naga_ir: filename,

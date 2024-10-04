@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use image::RgbaImage;
 use kardashev_protocol::assets::{
@@ -47,23 +44,16 @@ impl Asset for Texture {
     type Dist = dist::Texture;
     type LoadError = LoadTextureError;
 
-    fn parse_dist_manifest(manifest: &dist::Manifest, refs: &mut HashMap<AssetId, usize>) {
-        for (index, texture) in manifest.textures.iter().enumerate() {
-            refs.insert(texture.id, index);
-        }
-    }
-
-    fn get_from_dist_manifest(manifest: &dist::Manifest, index: usize) -> Option<&Self::Dist> {
-        manifest.textures.get(index)
-    }
-
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
         loader: &'a mut Loader<'b>,
     ) -> Result<Self, Self::LoadError> {
         tracing::debug!(%asset_id, "loading texture");
 
-        let metadata = loader.metadata.get::<Texture>(asset_id)?;
+        let metadata = loader
+            .dist_assets
+            .get::<dist::Texture>(asset_id)
+            .ok_or_else(|| AssetNotFound { asset_id })?;
 
         if metadata.crop.is_some() {
             todo!("refactor texture atlas system");

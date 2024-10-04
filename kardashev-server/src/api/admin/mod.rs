@@ -28,7 +28,18 @@ pub fn router() -> Router<Context> {
             "/shutdown",
             routing::get(|State(context): State<Context>| {
                 async move {
-                    context.shutdown();
+                    context.shutdown.cancel();
+                }
+            }),
+        )
+        .route(
+            "/rebuild-assets",
+            routing::get(|State(context): State<Context>| {
+                async move {
+                    if let Some(trigger) = &context.rebuild_assets {
+                        // todo: return result
+                        let _ = trigger.trigger().await;
+                    }
                 }
             }),
         )
