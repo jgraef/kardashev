@@ -6,19 +6,14 @@ edition = "2021"
 [dependencies.kardashev-protocol]
 workspace = true
 
-[dependencies.kardashev-assets]
+[dependencies.kardashev-build]
 workspace = true
 features = ["server"]
 
 [dependencies]
 axum = { version = "0.7", features = ["http2", "tracing", "ws"] }
 chrono = "0.4.38"
-clap = { version = "4.5.18", features = ["derive", "env"] }
-color-eyre = "0.6"
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut", "from", "into"] }
-dotenvy = "0.15"
-libflate = "2.1.0"
-mime = "0.3.17"
 nalgebra = { version = "0.33.0", features = ["serde-serialize"] }
 palette = { version = "0.7.5", features = ["serializing"] }
 semver = "1.0.23"
@@ -27,9 +22,7 @@ serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 sqlx = { version = "0.8.2", features = ["postgres", "runtime-tokio", "uuid", "chrono"] }
 thiserror = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "process"] }
+tokio = { version = "1", features = ["macros", "sync"] }
 tokio-util = "0.7.12"
-tower = "0.5.1"
-tower-http = { version = "0.6.0", features = ["fs", "trace"] }
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+

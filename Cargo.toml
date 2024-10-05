@@ -1,9 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "kardashev-admin",
-    "kardashev-assets",
-    "kardashev-assets-tool",
+    "kardashev-build",
+    "kardashev-cli",
     "kardashev-client",
     "kardashev-lab",
     "kardashev-protocol",
@@ -11,8 +10,8 @@ members = [
     "kardashev-ui",
 ]
 
-[workspace.dependencies.kardashev-assets]
-path = "kardashev-assets"
+[workspace.dependencies.kardashev-build]
+path = "kardashev-build"
 version = "0.1.0"
 
 [workspace.dependencies.kardashev-client]
@@ -21,4 +20,8 @@ version = "0.1.0"
 
 [workspace.dependencies.kardashev-protocol]
 path = "kardashev-protocol"
+version = "0.1.0"
+
+[workspace.dependencies.kardashev-server]
+path = "kardashev-server"
 version = "0.1.0"

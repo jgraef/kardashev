@@ -22,8 +22,8 @@ use kardashev_protocol::{
 };
 
 use crate::{
+    context::Context,
     error::Error,
-    server::Context,
     util::sqlx::{
         Rgb,
         Vec3,

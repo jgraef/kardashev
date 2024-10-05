@@ -14,7 +14,6 @@ Thumbs.db
 # Env vars
 .env
 
-# trunk dist
+# project specific
+/dist
 /kardashev-ui/dist
-/assets/dist
-

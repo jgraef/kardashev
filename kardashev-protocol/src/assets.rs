@@ -2,7 +2,6 @@ use std::{
     any::{
         type_name,
         Any,
-        TypeId,
     },
     borrow::Cow,
     collections::{
@@ -248,31 +247,6 @@ pub struct CompiledShader {
     pub module_info: naga::valid::ModuleInfo,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Wasm {
-    pub id: AssetId,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-
-    pub js: String,
-    pub wasm: String,
-}
-
-impl Asset for Wasm {
-    const TYPE_NAME: &'static str = "wasm";
-
-    const TYPE_ID: Uuid = uuid!("e204a976-f3e5-4ea8-8da9-5df4a26ca356");
-
-    fn id(&self) -> AssetId {
-        self.id
-    }
-
-    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
-        [&*self.js, &*self.wasm].into_iter()
-    }
-}
-
 pub trait Asset: Serialize + DeserializeOwned + Send + Sync + 'static {
     const TYPE_NAME: &'static str;
     const TYPE_ID: Uuid;
@@ -390,7 +364,6 @@ impl AssetTypes {
         self.register::<Material>();
         self.register::<Mesh>();
         self.register::<Shader>();
-        self.register::<Wasm>();
         self
     }
 }
