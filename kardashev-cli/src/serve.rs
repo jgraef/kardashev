@@ -7,11 +7,7 @@ use axum::{
     },
     Router,
 };
-use tokio::{
-    net::TcpListener,
-    task::JoinSet,
-};
-use tokio_util::sync::CancellationToken;
+use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{
     services::{
@@ -27,7 +23,7 @@ use tower_http::{
 
 use crate::{
     build::BuildOptions,
-    util::shutdown::graceful_shutdown,
+    util::shutdown::GracefulShutdown,
     Error,
 };
 
@@ -45,18 +41,14 @@ pub struct Args {
 
 impl Args {
     pub async fn run(self) -> Result<(), Error> {
-        let shutdown = CancellationToken::new();
-        graceful_shutdown(shutdown.clone());
-        let mut join_set = JoinSet::new();
+        let mut shutdown = GracefulShutdown::new();
 
-        self.build_options
-            .spawn(shutdown.clone(), &mut join_set)
-            .await?;
+        self.build_options.spawn(&mut shutdown).await?;
 
         let mut router = Router::new().nest(
             "/api",
             kardashev_server::Builder::default()
-                .with_shutdown(shutdown.clone())
+                .with_shutdown(shutdown.token())
                 .with_connect_db(&self.database_url)
                 .await?
                 .build(),
@@ -94,17 +86,18 @@ impl Args {
             ),
         );
 
-        tokio::spawn(async move {
-            tracing::info!("Listening at http://{}", self.address);
-            let listener = TcpListener::bind(&self.address).await?;
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move { shutdown.cancelled().await })
-                .await?;
-            Ok::<(), Error>(())
+        shutdown.spawn({
+            let token = shutdown.token();
+            async move {
+                tracing::info!("Listening at http://{}", self.address);
+                let listener = TcpListener::bind(&self.address).await?;
+                axum::serve(listener, router)
+                    .with_graceful_shutdown(async move { token.cancelled().await })
+                    .await?;
+                Ok::<(), Error>(())
+            }
         });
 
-        while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
-
-        Ok(())
+        shutdown.join().await
     }
 }

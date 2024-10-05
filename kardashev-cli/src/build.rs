@@ -8,11 +8,9 @@ use kardashev_build::{
     ui::compile_ui,
     util::watch::WatchFiles,
 };
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
 
 use crate::{
-    util::shutdown::graceful_shutdown,
+    util::shutdown::GracefulShutdown,
     Error,
 };
 
@@ -24,15 +22,11 @@ pub struct Args {
 
 impl Args {
     pub async fn run(self) -> Result<(), Error> {
-        let shutdown = CancellationToken::new();
-        graceful_shutdown(shutdown.clone());
-        let mut join_set = JoinSet::new();
+        let mut shutdown = GracefulShutdown::new();
 
-        self.build_options.spawn(shutdown, &mut join_set).await?;
+        self.build_options.spawn(&mut shutdown).await?;
 
-        while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
-
-        Ok(())
+        shutdown.join().await
     }
 }
 
@@ -67,11 +61,7 @@ pub struct BuildOptions {
 }
 
 impl BuildOptions {
-    pub async fn spawn(
-        &self,
-        shutdown: CancellationToken,
-        join_set: &mut JoinSet<Result<(), Error>>,
-    ) -> Result<(), Error> {
+    pub async fn spawn(&self, shutdown: &mut GracefulShutdown) -> Result<(), Error> {
         let debounce = (!self.no_debounce).then(|| Duration::from_secs_f32(self.debounce));
 
         if self.assets {
@@ -83,46 +73,56 @@ impl BuildOptions {
             processor.add_directory(&self.assets_path)?;
             processor.process(self.clean).await?;
 
-            let shutdown = shutdown.clone();
-            join_set.spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = shutdown.cancelled() => break,
-                        changes_option = processor.wait_for_changes(debounce) => {
-                            let Some(_changes) = changes_option else { break; };
-                            if let Err(error) = processor.process(false).await {
-                                tracing::error!(%error);
+            if self.watch {
+                let token = shutdown.token();
+                shutdown.spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = token.cancelled() => break,
+                            changes_option = processor.wait_for_changes(debounce) => {
+                                let Some(_changes) = changes_option else { break; };
+                                if let Err(error) = processor.process(false).await {
+                                    tracing::error!(%error);
+                                }
                             }
                         }
                     }
-                }
 
-                Ok(())
-            });
+                    Ok(())
+                });
+            }
         }
 
         if self.ui {
             let dist_ui = self.dist_path.join("ui");
             compile_ui(&self.ui_path, &dist_ui).await?;
-            let ui_path = self.ui_path.clone();
-            let mut watch_files = WatchFiles::new()?;
 
-            let shutdown = shutdown.clone();
-            join_set.spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = shutdown.cancelled() => break,
-                        changes_option = watch_files.next(debounce) => {
-                            let Some(_changes) = changes_option else { break; };
-                            if let Err(error) = compile_ui(&ui_path, &dist_ui).await {
-                                tracing::error!(%error);
+            if self.watch {
+                let ui_path = self.ui_path.clone();
+                let mut watch_files = WatchFiles::new()?;
+                watch_files.watch(&ui_path)?;
+
+                let token = shutdown.token();
+                shutdown.spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = token.cancelled() => break,
+                            changes_option = watch_files.next(debounce) => {
+                                let Some(_changes) = changes_option else { break; };
+                                if let Err(error) = compile_ui(&ui_path, &dist_ui).await {
+                                    tracing::error!(%error);
+                                }
                             }
                         }
                     }
-                }
 
-                Ok(())
-            });
+                    Ok(())
+                });
+            }
+        }
+
+        if self.watch {
+            tracing::info!("Watching for file changes...");
         }
 
         Ok(())

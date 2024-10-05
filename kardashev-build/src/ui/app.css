@@ -1,0 +1,122 @@
+#root {
+  display: block;
+  width: 100%;
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+}
+
+.kardashev-app-93c5d72 {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100vh;
+  flex-grow: 1;
+}
+
+.kardashev-main-93c5d72 {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  flex-grow: 1;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: black;
+  font-family: monospace;
+  font-size: smaller;
+  color: white;
+}
+
+a {
+  color: #42b912;
+}
+a:hover {
+  color: #54e61b;
+}
+
+.kardashev-page-93c5d72 {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-x: scroll;
+  overflow-y: scroll;
+  padding: 1em;
+}
+.kardashev-page-93c5d72 h1 {
+  font-size: x-large;
+  margin-bottom: 1em;
+}
+.kardashev-page-93c5d72 h2 {
+  font-size: larger;
+}
+.kardashev-page-93c5d72 .bi {
+  margin-right: 0.5em;
+}
+.kardashev-page-93c5d72 p {
+  margin-left: 1em;
+}
+
+.kardashev-dock-ca70856 {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 3rem;
+  background: #1f6404;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0));
+}
+.kardashev-dock-ca70856 .kardashev-item-ca70856 {
+  border-radius: 0;
+  list-style: none;
+}
+.kardashev-dock-ca70856 .kardashev-link-ca70856 {
+  display: block;
+  font-size: 1.5em;
+  width: 3rem;
+  height: 3rem;
+  margin-top: auto;
+  margin-bottom: auto;
+  color: white;
+  transition: background-color ease-in-out 0.3s;
+}
+.kardashev-dock-ca70856 .kardashev-link-ca70856:hover {
+  color: #54e61b;
+}
+.kardashev-dock-ca70856 .kardashev-link-ca70856 i {
+  vertical-align: middle;
+  padding-top: 0.2em;
+}
+.kardashev-dock-ca70856 .kardashev-link-ca70856.active {
+  background: black;
+}
+.kardashev-dock-ca70856 .kardashev-group-bottom-ca70856, .kardashev-dock-ca70856 .kardashev-group-top-ca70856 {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+  padding: 0;
+  margin: 0;
+}
+.kardashev-dock-ca70856 .kardashev-group-top-ca70856 {
+  margin-bottom: auto;
+}
+.kardashev-dock-ca70856 .kardashev-group-bottom-ca70856 {
+  margin-top: auto;
+}
+
+.kardashev-kardashev-icon-d63406f {
+  height: 1em;
+  width: 1em;
+}
+
+.kardashev-window-dc001e1 {
+  display: block;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}

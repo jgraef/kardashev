@@ -94,7 +94,7 @@ impl Cargo {
         let mut command = self.command();
         command.arg("build");
         if let Some(target) = target {
-            command.arg("target");
+            command.arg("--target");
             command.arg(target);
         }
         command.spawn()?.wait().await?.into_result()?;

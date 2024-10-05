@@ -156,6 +156,7 @@ impl Processor {
         Ok(())
     }
 
+    #[tracing::instrument]
     pub async fn process(&mut self, clean: bool) -> Result<Processed, Error> {
         tracing::info!("processing assets");
 

@@ -103,7 +103,7 @@ impl WatchFiles {
                             | EventKind::Create(_)
                             | EventKind::Modify(_)
                             | EventKind::Remove(_) => {
-                                let _ = tx.send(event.paths);
+                                let _ = tx.blocking_send(event.paths);
                             }
                             _ => {}
                         }
@@ -151,6 +151,8 @@ impl WatchFiles {
             .await?
             .into_iter()
             .collect::<HashSet<PathBuf>>();
+
+        tracing::debug!(?changed, "changed");
 
         if let Some(debounce) = debounce {
             loop {

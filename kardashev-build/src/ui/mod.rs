@@ -1,7 +1,13 @@
 mod cargo;
 mod wasm_bindgen;
 
-use std::path::Path;
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::Path,
+};
+
+use askama::Template;
 
 use crate::{
     ui::{
@@ -19,23 +25,15 @@ pub enum Error {
     WasmBindgen(#[from] crate::ui::wasm_bindgen::WasmBindgenError),
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn compile_ui(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
 ) -> Result<(), Error> {
     let input_path = input_path.as_ref();
     let output_path = output_path.as_ref();
-    tracing::info!(input = %input_path.display(), output = %output_path.display(), "compiling ui");
 
     std::fs::create_dir_all(&output_path)?;
-
-    // check freshness
-    let input_modified_time = path_modified_timestamp(input_path, std::cmp::max)?;
-    let output_modified_time = path_modified_timestamp(output_path, std::cmp::min)?;
-    if input_modified_time <= output_modified_time {
-        tracing::debug!("not modified since last build. skipping.");
-        return Ok(());
-    }
 
     let cargo = Cargo::new(&input_path);
 
@@ -59,7 +57,55 @@ pub async fn compile_ui(
         .join(format!("{target_name}.wasm"));
     tracing::debug!(target_path = %target_path.display());
 
+    let wasm_filename = format!("{target_name}_bg.wasm");
+    let js_filename = format!("{target_name}.js");
+    let css_filename = format!("{target_name}.css");
+    let index_filename = "index.html";
+
+    // check if all files exist
+    if !output_path.join(&wasm_filename).exists()
+        || !output_path.join(&js_filename).exists()
+        || !output_path.join(&css_filename).exists()
+        || !output_path.join(&index_filename).exists()
+    {
+        tracing::warn!("input file missing. rebuilding.");
+    }
+    else {
+        // check freshness
+        let input_modified_time = path_modified_timestamp(input_path, std::cmp::max)?;
+        let output_modified_time = path_modified_timestamp(output_path, std::cmp::min)?;
+        if input_modified_time <= output_modified_time {
+            tracing::debug!("not modified since last build. skipping.");
+            return Ok(());
+        }
+    }
+
+    tracing::info!(target = %target_name, "running `cargo build`");
+    cargo.build(Some("wasm32-unknown-unknown")).await?;
+
+    tracing::info!(target = %target_name, "running `wasm-bindgen`");
     wasm_bindgen(&target_path, output_path, &target_name).await?;
 
+    std::fs::write(output_path.join(&css_filename), include_str!("./app.css"))?;
+
+    tracing::debug!(target = %target_name, "generating `index.html`");
+    let mut writer = BufWriter::new(File::create(output_path.join(&index_filename))?);
+    IndexHtml {
+        js: &js_filename,
+        wasm: &wasm_filename,
+        css: &css_filename,
+    }
+    .write_into(&mut writer)?;
+
+    tracing::info!("done");
+
     Ok(())
+}
+
+#[derive(Debug, Template)]
+#[template(path = "index.html")]
+struct IndexHtml<'a> {
+    js: &'a str,
+    wasm: &'a str,
+    css: &'a str,
 }
