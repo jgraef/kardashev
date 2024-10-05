@@ -50,12 +50,15 @@ pub async fn compile_ui(
     let workspace_path = workspace_path.parent().unwrap();
     tracing::debug!(workspace_path = %workspace_path.display());
 
-    let target_path = workspace_path
+    let target_wasm_path = workspace_path
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("debug")
         .join(format!("{target_name}.wasm"));
-    tracing::debug!(target_path = %target_path.display());
+    let target_css_path = workspace_path
+        .join("target")
+        .join(format!("{target_name}.css"));
+    tracing::debug!(target_wasm_path = %target_wasm_path.display(), target_css_path = %target_css_path.display());
 
     let wasm_filename = format!("{target_name}_bg.wasm");
     let js_filename = format!("{target_name}.js");
@@ -84,9 +87,9 @@ pub async fn compile_ui(
     cargo.build(Some("wasm32-unknown-unknown")).await?;
 
     tracing::info!(target = %target_name, "running `wasm-bindgen`");
-    wasm_bindgen(&target_path, output_path, &target_name).await?;
+    wasm_bindgen(&target_wasm_path, output_path, &target_name).await?;
 
-    std::fs::write(output_path.join(&css_filename), include_str!("./app.css"))?;
+    std::fs::copy(&target_css_path, output_path.join(&css_filename))?;
 
     tracing::debug!(target = %target_name, "generating `index.html`");
     let mut writer = BufWriter::new(File::create(output_path.join(&index_filename))?);

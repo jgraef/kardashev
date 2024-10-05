@@ -23,7 +23,6 @@ leptos_router = { version = "0.6", features = ["nightly", "csr"] }
 leptos-use = { version = "0.13.5", features = [] }
 nalgebra = "0.33.0"
 palette = "0.7"
-stylance = "0.5.1"
 thiserror = "1"
 tokio = { version = "1.36", default-features = false, features = ["sync", "macros"] }
 tracing = "0.1"
@@ -44,8 +43,20 @@ gloo-timers = { version = "0.3.0", features = ["futures"] }
 codee = "0.2.0"
 bitflags = "2.6.0"
 rmp-serde = "1.3.0"
+turf = "0.9.3"
 
-[package.metadata.stylance]
-output_file = "../target/app.scss"
-class_name_pattern = "kardashev-[name]-[hash]"
-scss_prelude = '@use "../kardashev-ui/prelude.scss" as *;'
+[package.metadata.turf]
+minify = false
+load_paths = ["src/prelude/"]
+
+[package.metadata.turf.class_names]
+template = "kardashev-<original_name>-<id>"
+excludes = []
+
+[package.metadata.turf.browser_targets]
+chrome = [80, 1, 2]
+firefox = 65
+safari = [12, 3]
+
+[package.metadata.turf.file_output]
+global_css_file_path = "target/kardashev-ui.css"

@@ -48,7 +48,7 @@ use crate::{
     },
 };
 
-stylance::import_crate_style!(style, "src/app/app.module.scss");
+crate::style!("src/app/app.scss");
 
 #[derive(Clone, Debug)]
 struct Urls {
@@ -89,9 +89,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Router>
-            <div class=style::app>
+            <div class=Style::APP>
                 <Dock />
-                <main class=style::main>
+                <main class=Style::MAIN>
                     <Routes>
                         <Route path="/" view=|| view!{ <Redirect path="/dashboard"/> } />
                         <Route path="/dashboard" view=|| view!{ "TODO: Dashboard" } />

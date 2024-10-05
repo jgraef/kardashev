@@ -7,7 +7,7 @@ use leptos::{
     SignalGet,
 };
 
-stylance::import_crate_style!(style, "src/app/components/icon.module.scss");
+crate::style!("src/app/components/icon.scss");
 
 #[component]
 pub fn BootstrapIcon(
@@ -20,6 +20,6 @@ pub fn BootstrapIcon(
 #[component]
 pub fn KardashevIcon() -> impl IntoView {
     view! {
-        <img src="/assets/kardashev.svg" class=style::kardashev_icon />
+        <img src="/assets/kardashev.svg" class=Style::KARDASHEV_ICON />
     }
 }

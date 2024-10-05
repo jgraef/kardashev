@@ -11,7 +11,7 @@ use leptos_router::{
 
 use super::icon::BootstrapIcon;
 
-stylance::import_crate_style!(style, "src/app/components/dock.module.scss");
+crate::style!("src/app/components/dock.scss");
 
 #[component]
 pub fn Item<H: ToHref + 'static>(
@@ -20,8 +20,8 @@ pub fn Item<H: ToHref + 'static>(
     #[prop(into)] label: Oco<'static, str>,
 ) -> impl IntoView {
     view! {
-        <li class=style::item>
-            <A href={href} active_class="active" class=style::link>
+        <li class=Style::ITEM>
+            <A href={href} active_class="active" class=Style::LINK>
                 <BootstrapIcon icon=icon alt=label />
             </A>
         </li>
@@ -31,12 +31,12 @@ pub fn Item<H: ToHref + 'static>(
 #[component]
 pub fn Dock() -> impl IntoView {
     view! {
-        <nav class=style::dock>
-            <ul class=style::group_top>
+        <nav class=Style::DOCK>
+            <ul class=Style::GROUP_TOP>
                 <Item href="/dashboard" icon="speedometer" label="Dashboard" />
                 <Item href="/map" icon="radar" label="Map" />
             </ul>
-            <ul class=style::group_bottom>
+            <ul class=Style::GROUP_BOTTOM>
                 <Item href="/settings" icon="gear" label="Settings" />
             </ul>
         </nav>

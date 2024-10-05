@@ -48,7 +48,7 @@ use crate::{
     },
 };
 
-stylance::import_crate_style!(style, "src/app/map.module.scss");
+crate::style!("src/app/map.scss");
 
 #[component]
 pub fn Map() -> impl IntoView {

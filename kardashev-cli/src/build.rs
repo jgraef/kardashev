@@ -14,6 +14,7 @@ use crate::{
     Error,
 };
 
+/// Build assets and UI.
 #[derive(Debug, clap::Args)]
 pub struct Args {
     #[command(flatten)]
@@ -32,32 +33,44 @@ impl Args {
 
 #[derive(Debug, clap::Args)]
 pub struct BuildOptions {
+    /// Path to the dist directory. This is where the generated files will be
+    /// stored.
     #[arg(long = "dist", env = "KARDASHEV_DIST", default_value = "./dist/")]
     pub dist_path: PathBuf,
 
+    /// Build assets
     #[arg(long)]
     pub assets: bool,
 
+    /// Path to the assets directory. This should contain one or more
+    /// `Asset.toml` files.
     #[arg(long, env = "KARDASHEV_ASSETS", default_value = "./assets/")]
     pub assets_path: PathBuf,
 
+    /// Build UI
     #[arg(long)]
     pub ui: bool,
 
+    /// Path to the UI crate.
     #[arg(long, env = "KARDASHEV_UI", default_value = "./kardashev-ui/")]
     pub ui_path: PathBuf,
 
+    /// Watch for file changes.
     #[arg(long)]
     pub watch: bool,
 
-    #[arg(long)]
-    pub clean: bool,
-
+    /// After a file change, wait N seconds before rebuilding to avoid to many
+    /// rebuild events.
     #[arg(long, default_value = "2")]
     pub debounce: f32,
 
+    /// Disable debounce.
     #[arg(long)]
     pub no_debounce: bool,
+
+    /// Start with a clean build.
+    #[arg(long)]
+    pub clean: bool,
 }
 
 impl BuildOptions {

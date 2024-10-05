@@ -12,6 +12,7 @@ use utils::format_uptime;
 
 use crate::admin::import_stars::import_stars;
 
+/// Send administrative commands to the server API.
 #[derive(Debug, clap::Args)]
 pub struct Args {
     #[arg(long, short, env = "KARDASHEV_API_URL")]
@@ -23,12 +24,18 @@ pub struct Args {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
+    /// Import stars into the database.
+    ///
+    /// Input file must be the same format as the HYG catalog.
     ImportStars {
+        /// Input file (HYG catalog)
         path: PathBuf,
 
+        /// How many stars to send to the server in one request.
         #[arg(long, default_value = "100")]
         batch_size: usize,
 
+        /// Only import the N stars that are closest to the sun.
         #[arg(long)]
         num_closest: Option<usize>,
     },

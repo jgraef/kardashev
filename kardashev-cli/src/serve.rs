@@ -27,14 +27,17 @@ use crate::{
     Error,
 };
 
+/// Serve API, and optionally assets and UI.
 #[derive(Debug, clap::Args)]
 pub struct Args {
     #[command(flatten)]
     build_options: BuildOptions,
 
+    /// The address on which to listen for HTTP connections.
     #[arg(long, env = "ADDRESS", default_value = "127.0.0.1:3333")]
     address: SocketAddr,
 
+    /// URL to the server's postgresql database.
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
 }

@@ -1,7 +1,18 @@
-$kardashev-primary: #1f6404;
-$kardashev-emphasis: #42b912;
-$kardashev-emphasis-light: #54e61b;
-$gradient: linear-gradient(180deg, rgba(white, .15), rgba(white, 0));
+@import "prelude";
+
+#root {
+    display: block;
+    width: 100%;
+    min-height: 100vh;
+}
+
+body {
+    margin: 0;
+}
+
+html {
+    background: black;
+}
 
 .app {
     display: flex;
@@ -20,7 +31,6 @@ $gradient: linear-gradient(180deg, rgba(white, .15), rgba(white, 0));
     max-height: 100%;
     overflow-x: auto;
     overflow-y: hidden;
-    background: black;
     font-family: monospace;
     font-size: smaller;
     color: white;

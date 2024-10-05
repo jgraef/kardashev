@@ -39,7 +39,7 @@ use crate::{
     utils::spawn_local_and_handle_error,
 };
 
-stylance::import_crate_style!(style, "src/app/components/window.module.scss");
+crate::style!("src/app/components/window.scss");
 
 pub fn provide_graphics() {
     tracing::debug!("creating renderer");
@@ -147,7 +147,7 @@ where
     view! {
         <div
             node_ref=container_node_ref
-            class=style::window
+            class=Style::WINDOW
         >
             <canvas
                 node_ref=canvas_node_ref
