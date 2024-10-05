@@ -26,8 +26,8 @@ impl Asset for Shader {
         &manifest.shaders
     }
 
-    fn process<'a, 'b: 'a>(
-        &self,
+    async fn process<'a, 'b: 'a>(
+        &'a self,
         id: AssetId,
         context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
@@ -37,7 +37,7 @@ impl Asset for Shader {
 
         let path = context.input_path(&self.path);
 
-        if context.is_fresh_file(id, &path)? {
+        if context.source_path(id, &path)?.is_fresh() {
             tracing::debug!("not modified since last build. skipping.");
             return Ok(());
         }

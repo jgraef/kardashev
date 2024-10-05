@@ -31,6 +31,9 @@ pub struct Manifest {
 
     #[serde(default)]
     pub shaders: HashMap<AssetId, Shader>,
+
+    #[serde(default)]
+    pub wasm: HashMap<AssetId, Wasm>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -60,7 +63,7 @@ pub enum ImageFormat {
     Tif,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScaleTo {
     pub width: Option<u32>,
@@ -144,6 +147,13 @@ pub struct Sound {
 pub struct Shader {
     pub label: Option<String>,
     pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Wasm {
+    pub label: Option<String>,
+    pub source: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize)]

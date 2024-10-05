@@ -25,6 +25,9 @@ pub enum Args {
 
         #[arg(long, env = "DIST", default_value = "./assets/dist")]
         dist: PathBuf,
+
+        #[arg(long)]
+        clean: bool,
     },
     #[cfg(feature = "server")]
     Serve {
@@ -58,8 +61,12 @@ async fn main() -> Result<(), Error> {
                 println!("{}", AssetId::generate());
             }
         }
-        Args::Build { assets, dist } => {
-            process(&assets, &dist)?;
+        Args::Build {
+            assets,
+            dist,
+            clean,
+        } => {
+            process(&assets, &dist, clean).await?;
         }
         #[cfg(feature = "server")]
         Args::Serve {

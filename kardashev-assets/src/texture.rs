@@ -31,8 +31,8 @@ impl Asset for Texture {
         &manifest.textures
     }
 
-    fn process<'a, 'b: 'a>(
-        &self,
+    async fn process<'a, 'b: 'a>(
+        &'a self,
         id: AssetId,
         context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
@@ -42,12 +42,17 @@ impl Asset for Texture {
 
         let path = context.input_path(&self.path);
 
-        if context.is_fresh_file(id, &path)? {
-            tracing::debug!("not modified since last build. skipping.");
+        if context.source_path(id, &path)?.is_fresh() {
+            tracing::debug!(%id, "not modified since last build. skipping.");
             return Ok(());
         }
 
-        let mut image = ImageReader::open(&path)?.decode()?;
+        let mut image = {
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || ImageReader::open(path)?.decode())
+                .await
+                .unwrap()?
+        };
 
         if let Some(scale_to) = &self.scale_to {
             let new_dimensions = match scale_to {
@@ -78,11 +83,12 @@ impl Asset for Texture {
                 }
                 _ => panic!("Either width, height, or both must be specified for scaling"),
             };
-            image = image.resize_exact(
-                new_dimensions[0],
-                new_dimensions[1],
-                scale_to.filter.unwrap_or_default().into(),
-            );
+            let filter = scale_to.filter.unwrap_or_default().into();
+            image = tokio::task::spawn_blocking(move || {
+                image.resize_exact(new_dimensions[0], new_dimensions[1], filter)
+            })
+            .await
+            .unwrap();
         }
 
         if let Some(atlas_builder_id) = self.atlas.clone().unwrap_or_default().into() {
@@ -96,19 +102,25 @@ impl Asset for Texture {
             )?;
         }
         else {
+            let size = dist::TextureSize {
+                w: image.width(),
+                h: image.height(),
+            };
+
             let filename = format!("{id}.png");
             let path = context.dist_path.join(&filename);
-            let mut writer = BufWriter::new(File::create(&path)?);
-            image.write_to(&mut writer, ImageFormat::Png)?;
+            tokio::task::spawn_blocking(move || {
+                let mut writer = BufWriter::new(File::create(&path)?);
+                image.write_to(&mut writer, ImageFormat::Png)
+            })
+            .await
+            .unwrap()?;
 
             context.dist_assets.insert(dist::Texture {
                 id,
                 image: filename.clone(),
                 label: self.label.clone(),
-                size: dist::TextureSize {
-                    w: image.width(),
-                    h: image.height(),
-                },
+                size,
                 crop: None,
                 u_edge_mode: None,
                 v_edge_mode: None,

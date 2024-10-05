@@ -69,6 +69,7 @@ impl Default for Urls {
     }
 }
 
+/// Main app component
 #[component]
 pub fn App() -> impl IntoView {
     let urls = Urls::default();

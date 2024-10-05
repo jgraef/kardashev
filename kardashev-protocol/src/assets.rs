@@ -248,7 +248,32 @@ pub struct CompiledShader {
     pub module_info: naga::valid::ModuleInfo,
 }
 
-pub trait Asset: Serialize + DeserializeOwned + 'static {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Wasm {
+    pub id: AssetId,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+
+    pub js: String,
+    pub wasm: String,
+}
+
+impl Asset for Wasm {
+    const TYPE_NAME: &'static str = "wasm";
+
+    const TYPE_ID: Uuid = uuid!("e204a976-f3e5-4ea8-8da9-5df4a26ca356");
+
+    fn id(&self) -> AssetId {
+        self.id
+    }
+
+    fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        [&*self.js, &*self.wasm].into_iter()
+    }
+}
+
+pub trait Asset: Serialize + DeserializeOwned + Send + Sync + 'static {
     const TYPE_NAME: &'static str;
     const TYPE_ID: Uuid;
 
@@ -258,7 +283,7 @@ pub trait Asset: Serialize + DeserializeOwned + 'static {
 
 #[derive(Default)]
 pub struct Assets {
-    assets: HashMap<AssetId, (Box<dyn Any>, DynAssetType)>,
+    assets: HashMap<AssetId, (Box<dyn Any + Send + Sync + 'static>, DynAssetType)>,
     unrecognized: Vec<AssetBlob>,
 }
 
@@ -365,6 +390,7 @@ impl AssetTypes {
         self.register::<Material>();
         self.register::<Mesh>();
         self.register::<Shader>();
+        self.register::<Wasm>();
         self
     }
 }
@@ -446,10 +472,16 @@ impl Deref for DynAssetType {
     }
 }
 
-trait DynAssetTypeTrait {
+trait DynAssetTypeTrait: Send + Sync + 'static {
     fn asset_type(&self) -> AssetType;
-    fn serialize(&self, asset: &dyn Any) -> Result<serde_json::Value, serde_json::Error>;
-    fn deserialize(&self, data: &serde_json::Value) -> Result<Box<dyn Any>, serde_json::Error>;
+    fn serialize(
+        &self,
+        asset: &(dyn Any + Send + Sync + 'static),
+    ) -> Result<serde_json::Value, serde_json::Error>;
+    fn deserialize(
+        &self,
+        data: &serde_json::Value,
+    ) -> Result<Box<dyn Any + Send + Sync + 'static>, serde_json::Error>;
     fn collect_files<'a>(&self, asset: &'a dyn Any, files: &mut HashSet<&'a str>);
 }
 
@@ -465,11 +497,17 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
         }
     }
 
-    fn serialize(&self, asset: &dyn Any) -> Result<serde_json::Value, serde_json::Error> {
+    fn serialize(
+        &self,
+        asset: &(dyn Any + Send + Sync + 'static),
+    ) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::to_value(asset.downcast_ref::<A>().unwrap())
     }
 
-    fn deserialize(&self, data: &serde_json::Value) -> Result<Box<dyn Any>, serde_json::Error> {
+    fn deserialize(
+        &self,
+        data: &serde_json::Value,
+    ) -> Result<Box<dyn Any + Send + Sync + 'static>, serde_json::Error> {
         Ok(Box::new(A::deserialize(data)?))
     }
 

@@ -1,5 +1,6 @@
 pub mod atlas;
 pub mod build_info;
+mod cargo;
 mod material;
 mod mesh;
 pub mod processor;
@@ -8,9 +9,12 @@ pub mod server;
 mod shader;
 pub mod source;
 mod texture;
+mod wasm;
+mod watch;
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::Path,
 };
 
@@ -28,21 +32,22 @@ use crate::{
     source::Manifest,
 };
 
-pub trait Asset: Sized + 'static {
+pub trait Asset: Sized + Send + Sync + 'static {
     fn register_dist_type(dist_asset_types: &mut dist::AssetTypes);
 
     fn get_assets(manifest: &Manifest) -> &HashMap<AssetId, Self>;
 
     fn process<'a, 'b: 'a>(
-        &self,
+        &'a self,
         id: AssetId,
         context: &'a mut ProcessContext<'b>,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync + 'a;
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("asset processing error")]
 pub enum Error {
+    #[error("asset not found: {id}")]
     AssetNotFound {
         id: AssetId,
     },
@@ -56,16 +61,19 @@ pub enum Error {
     WgslParse(#[from] naga::front::wgsl::ParseError),
     #[cfg(feature = "server")]
     Axum(#[from] axum::Error),
-    #[cfg(feature = "server")]
-    Notify(#[from] notify_async::Error),
+    Watch(#[from] crate::watch::Error),
     AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
+    Cargo(#[from] crate::cargo::Error),
+    WasmBindgen(#[from] crate::wasm::WasmBindgenError),
+    Walrus(#[from] crate::wasm::WalrusError),
 }
 
-pub fn process(
+pub async fn process(
     source_path: impl AsRef<Path>,
     dist_path: impl AsRef<Path>,
+    clean: bool,
 ) -> Result<Processed, Error> {
     let mut processor = Processor::new(dist_path)?;
     processor.add_directory(source_path)?;
-    processor.process()
+    processor.process(clean).await
 }

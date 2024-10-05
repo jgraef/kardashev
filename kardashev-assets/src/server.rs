@@ -1,8 +1,5 @@
 use std::{
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::PathBuf,
     time::Duration,
 };
 
@@ -28,7 +25,7 @@ use tower_http::services::ServeDir;
 
 use crate::{
     dist,
-    processor::Processed,
+    processor::{Processed, Processor},
     Error,
 };
 
@@ -52,45 +49,33 @@ pub struct Server {
 
 impl Server {
     pub async fn new(config: &Config, shutdown: CancellationToken) -> Result<Self, Error> {
-        process(&config.source_path, &config.dist_path).await?;
+        crate::process(&config.source_path, &config.dist_path, false).await?;
 
         let (trigger_tx, mut trigger_rx) = mpsc::channel(16);
         let trigger = Trigger { tx: trigger_tx };
         let (changed_tx, _) = broadcast::channel(32);
 
-        if let Some(watch_config) = &config.watch {
-            let mut watch =
-                notify_async::watch_modified(&config.source_path, watch_config.debounce)?;
-            let shutdown = shutdown.clone();
-            let trigger = trigger.clone();
-
-            tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = shutdown.cancelled() => break,
-                        result = watch.modified() => {
-                            result.unwrap();
-                            if let Err(error) = trigger.trigger().await {
-                                tracing::error!(?error, "error while processing assets");
-                            }
-                        }
-                    }
-                }
-            });
-        }
+        let mut processor = Processor::new(&config.dist_path)?;
+        processor.add_directory(&config.source_path)?;
+        let debounce = config.watch.as_ref().map(|watch_config| watch_config.debounce);
 
         tokio::spawn({
-            let source_path = config.source_path.clone();
-            let dist_path = config.dist_path.clone();
             let changed_tx = changed_tx.clone();
 
             async move {
                 loop {
                     tokio::select! {
                         _ = shutdown.cancelled() => break,
+                        changed_paths_opt = processor.wait_for_changes(debounce) => {
+                            let Some(_changed_paths) = changed_paths_opt else { break; };
+                            if let Err(error) = processor.process(false).await {
+                                tracing::error!(?error, "asset processor failed");
+                            }
+                            
+                        }
                         result_tx_opt = trigger_rx.recv() => {
                             let Some(result_tx) = result_tx_opt else { break; };
-                            let result = process(&source_path, &dist_path).await;
+                            let result = processor.process(false).await;
                             if let Ok(processed) = &result {
                                 let _ = changed_tx.send(processed.changed.iter().copied().collect());
                             }
@@ -167,20 +152,4 @@ impl Trigger {
         self.tx.send(tx).await.unwrap();
         rx.await.unwrap()
     }
-}
-
-async fn process(
-    source_path: impl AsRef<Path>,
-    dist_path: impl AsRef<Path>,
-) -> Result<Processed, Error> {
-    tracing::info!("processing assets");
-
-    let source_path = source_path.as_ref().to_owned();
-    let dist_path = dist_path.as_ref().to_owned();
-
-    let processed = tokio::task::spawn_blocking(move || crate::process(&source_path, &dist_path))
-        .await
-        .unwrap()?;
-
-    Ok(processed)
 }

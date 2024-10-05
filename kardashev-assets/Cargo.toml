@@ -8,7 +8,7 @@ workspace = true
 
 [features]
 default = ["server"]
-server = ["dep:axum", "dep:tokio", "dep:tower", "dep:tower-http", "dep:notify-async", "dep:tokio-util"]
+server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:tokio-util"]
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"], optional = true }
@@ -27,8 +27,10 @@ rmp-serde = "1.3.0"
 chrono = { version = "0.4.38", features = ["serde"] }
 thiserror = "1.0.64"
 libflate = "2.1.0"
-tokio = { version = "1", features = ["macros", "sync"], optional = true }
+tokio = { version = "1", features = ["macros", "sync", "process"] }
 tokio-util = { version = "0.7.12", optional = true }
 tower = { version = "0.5.1", optional = true }
 tower-http = { version = "0.6.0", features = ["fs", "trace"], optional = true }
-notify-async = { git = "https://github.com/FeraeLabs/notify-async.git", optional = true }
+wasm-bindgen-cli-support = "=0.2.93"
+walrus = { version = "=0.21.1", features = ["parallel"] }
+notify = { version = "6.1.1", default-features = false, features = ["macos_fsevent"] }

@@ -5,7 +5,10 @@ use kardashev_protocol::assets::AssetId;
 use crate::{
     build_info::GeneratedIdKey,
     dist,
-    processor::ProcessContext,
+    processor::{
+        Freshness,
+        ProcessContext,
+    },
     source::{
         AssetIdOrInline,
         Manifest,
@@ -26,20 +29,24 @@ impl Asset for Material {
         &manifest.materials
     }
 
-    fn process<'a, 'b: 'a>(
-        &self,
+    async fn process<'a, 'b: 'a>(
+        &'a self,
         id: AssetId,
-        mut context: &'a mut ProcessContext<'b>,
+        context: &'a mut ProcessContext<'b>,
     ) -> Result<(), Error> {
         if !context.processing(id) {
             return Ok(());
         }
 
-        let mut is_fresh = true;
+        let mut freshness = Freshness::Fresh;
 
-        let mut process_texture = |texture: &Option<AssetIdOrInline<Texture>>,
-                                   property: MaterialProperty|
-         -> Result<Option<AssetId>, Error> {
+        async fn process_texture<'a, 'b: 'a>(
+            texture: &Option<AssetIdOrInline<Texture>>,
+            property: MaterialProperty,
+            id: AssetId,
+            mut context: &'a mut ProcessContext<'b>,
+            freshness: &mut Freshness,
+        ) -> Result<Option<AssetId>, Error> {
             if let Some(texture) = texture {
                 let (texture_asset_id, texture) = match texture {
                     AssetIdOrInline::AssetId(texture_asset_id) => {
@@ -65,24 +72,66 @@ impl Asset for Material {
                     }
                 };
 
-                texture.process(texture_asset_id, &mut context)?;
-                is_fresh &= context.is_fresh_dependency(id, texture_asset_id);
+                texture.process(texture_asset_id, &mut context).await?;
+                freshness.and(context.source_asset(id, texture_asset_id));
 
                 Ok(Some(texture_asset_id))
             }
             else {
                 Ok(None)
             }
-        };
+        }
 
-        let ambient = process_texture(&self.ambient, MaterialProperty::Ambient)?;
-        let diffuse = process_texture(&self.diffuse, MaterialProperty::Diffuse)?;
-        let specular = process_texture(&self.specular, MaterialProperty::Specular)?;
-        let normal = process_texture(&self.normal, MaterialProperty::Normal)?;
-        let shininess = process_texture(&self.shininess, MaterialProperty::Shininess)?;
-        let dissolve = process_texture(&self.dissolve, MaterialProperty::Dissolve)?;
+        let ambient = process_texture(
+            &self.ambient,
+            MaterialProperty::Ambient,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let diffuse = process_texture(
+            &self.diffuse,
+            MaterialProperty::Diffuse,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let specular = process_texture(
+            &self.specular,
+            MaterialProperty::Specular,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let normal = process_texture(
+            &self.normal,
+            MaterialProperty::Normal,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let shininess = process_texture(
+            &self.shininess,
+            MaterialProperty::Shininess,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let dissolve = process_texture(
+            &self.dissolve,
+            MaterialProperty::Dissolve,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
 
-        if is_fresh {
+        if freshness.is_fresh() {
             tracing::debug!(%id, "not modified since last build. skipping.");
             return Ok(());
         }

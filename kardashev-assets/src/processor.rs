@@ -6,6 +6,7 @@ use std::{
     },
     fmt::Debug,
     fs::File,
+    future::Future,
     io::{
         BufReader,
         BufWriter,
@@ -16,6 +17,7 @@ use std::{
         Path,
         PathBuf,
     },
+    pin::Pin, time::Duration,
 };
 
 use chrono::{
@@ -37,6 +39,7 @@ use crate::{
     dist,
     source::Manifest,
     texture::UnfinishedTexture,
+    watch::{ChangedPaths, WatchSources},
     Asset,
     AssetId,
     Error,
@@ -49,6 +52,7 @@ pub struct Processor {
     dist_path: PathBuf,
     build_info: BuildInfo,
     precompress: HashSet<CompressionFormat>,
+    watch_sources: Option<WatchSources>,
 }
 
 impl Processor {
@@ -72,12 +76,25 @@ impl Processor {
                 DynAssetType::new::<source::Texture>(),
                 DynAssetType::new::<source::Mesh>(),
                 DynAssetType::new::<source::Shader>(),
+                DynAssetType::new::<source::Wasm>(),
             ],
             source: Source::default(),
             dist_path: dist_path.to_owned(),
             build_info,
             precompress: HashSet::new(),
+            watch_sources: None,
         })
+    }
+
+    pub fn watch_source_files(&mut self) -> Result<(), Error> {
+        if self.watch_sources.is_none() {
+            self.watch_sources = Some(WatchSources::new()?);
+        }
+        Ok(())
+    }
+
+    pub async fn wait_for_changes(&mut self, debounce: Option<Duration>) -> Option<ChangedPaths> {
+        self.watch_sources.as_mut()?.next_changes(debounce).await
     }
 
     pub fn register_asset_type<A: Asset>(&mut self) {
@@ -105,6 +122,10 @@ impl Processor {
 
         tracing::info!(path = %path.display(), "adding manifest file");
 
+        if let Some(watch_sources) = &mut self.watch_sources {
+            watch_sources.add_manifest_path(path.canonicalize()?)?;
+        }
+
         let toml = std::fs::read_to_string(path)?;
         let manifest: Manifest = toml::from_str(&toml)?;
 
@@ -127,19 +148,24 @@ impl Processor {
         Ok(())
     }
 
-    pub fn process(&mut self) -> Result<Processed, Error> {
+    pub async fn process(&mut self, clean: bool) -> Result<Processed, Error> {
         let build_time = Utc::now();
         let mut processed = HashSet::new();
         let mut changed = HashSet::new();
         let mut atlas_builders = HashMap::new();
+        let mut watch_sources = self.watch_sources.as_ref().map(|_| HashSet::new());
 
         // create dist path, if it doesn't exist already
         std::fs::create_dir_all(&self.dist_path)?;
 
-        // load dist manifest if it exists
+        // if this is a clean build, we need to clear build times
+        if clean {
+            self.build_info.build_times.clear();
+        }
+
+        // load dist manifest if it exists and this isn't a clean build
         let path = self.dist_path.join("assets.json");
-        let mut dist_assets = path
-            .exists()
+        let mut dist_assets = (path.exists() && !clean)
             .then(|| {
                 let reader = BufReader::new(File::open(&path)?);
                 let dist_manifest: dist::Manifest = serde_json::from_reader(reader)?;
@@ -171,10 +197,19 @@ impl Processor {
                         processed: &mut processed,
                         changed: &mut changed,
                         precompress: &self.precompress,
+                        watch_sources: watch_sources.as_mut(),
                     };
-                    asset_type.process(&mut context, id)?;
+                    asset_type.process(&mut context, id).await?;
                 }
             }
+        }
+
+        // update file watcher
+        match (&mut self.watch_sources, watch_sources) {
+            (Some(watch_sources), Some(new)) => {
+                watch_sources.set_source_paths(new)?;
+            }
+            _ => {}
         }
 
         // remove assets that were not generated this time
@@ -246,9 +281,9 @@ impl Processor {
             let filename = PathBuf::from(entry.file_name());
             if !files.contains(&filename) {
                 tracing::info!(file = %filename.display(), "cleaning up file");
+                std::fs::remove_file(self.dist_path.join(&filename))?;
             }
         }
-        // todo
 
         Ok(Processed { changed })
     }
@@ -285,6 +320,7 @@ pub struct ProcessContext<'a> {
     pub processed: &'a mut HashSet<AssetId>,
     pub changed: &'a mut HashSet<AssetId>,
     pub precompress: &'a HashSet<CompressionFormat>,
+    pub watch_sources: Option<&'a mut HashSet<PathBuf>>,
 }
 
 impl<'a> ProcessContext<'a> {
@@ -300,21 +336,29 @@ impl<'a> ProcessContext<'a> {
         self.changed.insert(id);
     }
 
-    pub fn is_fresh_file(&self, id: AssetId, path: impl AsRef<Path>) -> Result<bool, Error> {
-        let modified_time = file_modified_timestamp(path)?;
-        Ok(self.is_fresh(id, modified_time))
-    }
-
-    pub fn is_fresh_dependency(&self, id: AssetId, dependency: AssetId) -> bool {
-        let dependency_build_time = self.build_info.build_times.get(&dependency);
-        dependency_build_time.map_or(false, |dependency_build_time| {
-            self.is_fresh(id, *dependency_build_time)
-        })
-    }
-
-    pub fn is_fresh(&self, id: AssetId, time: DateTime<Utc>) -> bool {
+    fn freshness(&self, id: AssetId, time: DateTime<Utc>) -> Freshness {
         let build_time = self.build_info.build_times.get(&id);
-        build_time.map_or(false, |build_time| build_time > &time)
+        build_time
+            .and_then(|build_time| (build_time > &time).then_some(Freshness::Fresh))
+            .unwrap_or(Freshness::Stale)
+    }
+
+    pub fn source_path(&mut self, id: AssetId, path: impl AsRef<Path>) -> Result<Freshness, Error> {
+        let path = path.as_ref();
+        
+        if let Some(watch_sources) = &mut self.watch_sources {
+            watch_sources.insert(path.canonicalize()?.to_owned());
+        }
+
+        let modified_time = path_modified_timestamp(path)?;
+        Ok(self.freshness(id, modified_time))
+    }
+
+    pub fn source_asset(&self, id: AssetId, dependency: AssetId) -> Freshness {
+        let dependency_build_time = self.build_info.build_times.get(&dependency);
+        dependency_build_time.map_or(Freshness::Stale, |dependency_build_time| {
+            self.freshness(id, *dependency_build_time)
+        })
     }
 
     pub fn processing(&mut self, id: AssetId) -> bool {
@@ -341,6 +385,29 @@ impl<'a> ProcessContext<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Freshness {
+    Fresh,
+    Stale,
+}
+
+impl Freshness {
+    pub fn and(&mut self, other: Freshness) {
+        match other {
+            Freshness::Fresh => {}
+            Freshness::Stale => *self = Freshness::Stale,
+        }
+    }
+
+    pub fn is_fresh(&self) -> bool {
+        *self == Freshness::Fresh
+    }
+
+    pub fn is_stale(&self) -> bool {
+        *self == Freshness::Stale
+    }
+}
+
 fn compress(
     format: CompressionFormat,
     dist_path: impl AsRef<Path>,
@@ -362,10 +429,21 @@ fn compress(
     })
 }
 
-pub fn file_modified_timestamp(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+pub fn path_modified_timestamp(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
     let path = path.as_ref();
+
     let metadata = path.metadata()?;
-    Ok(metadata.modified()?.into())
+    let mut modified_time: DateTime<Utc> = metadata.modified()?.into();
+
+    if metadata.is_dir() {
+        for result in WalkDir::new(path) {
+            let entry = result?;
+            let metadata = entry.metadata()?;
+            modified_time = modified_time.max(metadata.modified()?.into())
+        }
+    }
+
+    Ok(modified_time)
 }
 
 #[derive(Clone, Copy)]
@@ -399,14 +477,14 @@ impl Deref for DynAssetType {
     }
 }
 
-trait DynAssetTypeTrait {
+trait DynAssetTypeTrait: Send + Sync + 'static {
     fn type_name(&self) -> &'static str;
     fn get_asset_ids(&self, manifest: &Manifest) -> Vec<AssetId>;
     fn process<'a, 'b: 'a>(
-        &self,
+        &'a self,
         context: &'a mut ProcessContext<'b>,
         asset_id: AssetId,
-    ) -> Result<(), Error>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Sync + 'a>>;
     fn register_dist_type(&self, dist_asset_types: &mut dist::AssetTypes);
 }
 
@@ -424,12 +502,12 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
     }
 
     fn process<'a, 'b: 'a>(
-        &self,
+        &'a self,
         context: &'a mut ProcessContext<'b>,
-        id: AssetId,
-    ) -> Result<(), Error> {
-        let asset = context.source.get_asset::<A>(id).unwrap();
-        asset.process(id, context)
+        asset_id: AssetId,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Sync + 'a>> {
+        let asset = context.source.get_asset::<A>(asset_id).unwrap();
+        Box::pin(asset.process(asset_id, context))
     }
 
     fn register_dist_type(&self, dist_asset_types: &mut dist::AssetTypes) {
