@@ -78,7 +78,17 @@ pub async fn compile_ui(
         // check freshness
         let input_modified_time = path_modified_timestamp(input_path, std::cmp::max)?;
         let output_modified_time = path_modified_timestamp(output_path, std::cmp::min)?;
-        if input_modified_time <= output_modified_time {
+        tracing::debug!(?input_modified_time, ?output_modified_time);
+        let fresh = match (input_modified_time, output_modified_time) {
+            (None, _) => true,
+            (Some(input_modified_time), Some(output_modified_time))
+                if input_modified_time <= output_modified_time =>
+            {
+                true
+            }
+            _ => false,
+        };
+        if fresh {
             tracing::debug!("not modified since last build. skipping.");
             return Ok(());
         }
@@ -91,7 +101,10 @@ pub async fn compile_ui(
     wasm_bindgen(&target_wasm_path, output_path, &target_name).await?;
 
     tracing::info!("collecting CSS");
-    let css_path = workspace_path.join("target").join("css").join("kardashev-ui");
+    let css_path = workspace_path
+        .join("target")
+        .join("css")
+        .join("kardashev-ui");
     let mut css_buf = vec![];
     for result in std::fs::read_dir(&css_path)? {
         let entry = result?;

@@ -26,6 +26,7 @@ use chrono::{
     Utc,
 };
 use image::ImageFormat;
+use tracing::Instrument;
 use walkdir::WalkDir;
 
 use crate::{
@@ -156,7 +157,7 @@ impl Processor {
         Ok(())
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     pub async fn process(&mut self, clean: bool) -> Result<Processed, Error> {
         tracing::info!("processing assets");
 
@@ -361,8 +362,12 @@ impl<'a> ProcessContext<'a> {
             watch_sources.insert(path.canonicalize()?.to_owned());
         }
 
-        let modified_time = path_modified_timestamp(path, std::cmp::max)?;
-        Ok(self.freshness(id, modified_time))
+        if let Some(modified_time) = path_modified_timestamp(path, std::cmp::max)? {
+            Ok(self.freshness(id, modified_time))
+        }
+        else {
+            Ok(Freshness::Fresh)
+        }
     }
 
     pub fn source_asset(&self, id: AssetId, dependency: AssetId) -> Freshness {
@@ -501,7 +506,8 @@ impl<A: Asset> DynAssetTypeTrait for DynAssetTypeImpl<A> {
         asset_id: AssetId,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Sync + 'a>> {
         let asset = context.source.get_asset::<A>(asset_id).unwrap();
-        Box::pin(asset.process(asset_id, context))
+        let span = tracing::info_span!("processing asset", id = %asset_id);
+        Box::pin(asset.process(asset_id, context).instrument(span))
     }
 
     fn register_dist_type(&self, dist_asset_types: &mut dist::AssetTypes) {

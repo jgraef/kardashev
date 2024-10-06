@@ -3,8 +3,6 @@ pub mod build_info;
 mod material;
 mod mesh;
 pub mod processor;
-#[cfg(feature = "server")]
-pub mod server;
 mod shader;
 pub mod source;
 mod texture;
@@ -56,8 +54,6 @@ pub enum Error {
     TomlDecode(#[from] toml::de::Error),
     WalkDir(#[from] walkdir::Error),
     WgslParse(#[from] naga::front::wgsl::ParseError),
-    #[cfg(feature = "server")]
-    Axum(#[from] axum::Error),
     Watch(#[from] crate::util::watch::Error),
     AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
 }

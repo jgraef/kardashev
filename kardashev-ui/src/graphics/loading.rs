@@ -10,6 +10,7 @@ use std::{
     },
 };
 
+use kardashev_protocol::assets::AssetId;
 use linear_map::LinearMap;
 
 use super::{
@@ -22,11 +23,15 @@ use super::{
     Error,
 };
 use crate::{
+    assets::MaybeHasAssetId,
     graphics::{
         material::Material,
         mesh::Mesh,
     },
-    utils::thread_local_cell::ThreadLocalCell,
+    utils::{
+        any_cache::AnyCache,
+        thread_local_cell::ThreadLocalCell,
+    },
     world::{
         RunSystemContext,
         System,
@@ -38,8 +43,8 @@ use crate::{
 /// The associated constant [`Self::Loaded`] should contain the GPU handles.
 /// This will be put into a map with on entry per backend (GPU) and then used by
 /// the rendering pipeline.
-pub trait GpuAsset {
-    type Loaded;
+pub trait GpuAsset: MaybeHasAssetId {
+    type Loaded: 'static;
 
     fn load(&self, context: &LoadContext) -> Result<Self::Loaded, Error>;
 }
@@ -77,13 +82,29 @@ impl<A: GpuAsset> OnGpu<A> {
     }
 
     /// Loads the asset to the GPU, if it isn't already.
-    pub fn load(&mut self, asset: &A, context: &LoadContext) -> Result<(), Error> {
+    pub fn load(
+        &mut self,
+        asset: &A,
+        context: &LoadContext,
+        cache: &mut BackendResourceCache,
+    ) -> Result<(), Error> {
         match self.loaded.entry(context.backend.id()) {
             linear_map::Entry::Occupied(_occupied) => {}
             linear_map::Entry::Vacant(vacant) => {
                 tracing::debug!(asset_type = type_name::<A>(), backend_id = ?context.backend.id(), "loading asset to gpu");
-                let resource = asset.load(context)?;
-                vacant.insert(BackendResource::new(resource));
+
+                let resource = if let Some(asset_id) = asset.maybe_asset_id() {
+                    cache
+                        .cache
+                        .get_or_try_insert((asset_id, context.backend.id()), || {
+                            Ok::<_, Error>(BackendResource::new(asset.load(context)?))
+                        })?
+                }
+                else {
+                    BackendResource::new(asset.load(context)?)
+                };
+
+                vacant.insert(resource);
             }
         }
         Ok(())
@@ -231,6 +252,11 @@ impl<R> From<R> for BackendResource<R> {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct BackendResourceCache {
+    cache: AnyCache<(AssetId, BackendId)>,
+}
+
 /// Loads assets to GPU(s)
 #[derive(Default)]
 pub struct GpuLoadingSystem {
@@ -251,6 +277,7 @@ impl System for GpuLoadingSystem {
             load_context: &LoadContext,
             world: &hecs::World,
             command_buffer: &mut hecs::CommandBuffer,
+            cache: &mut BackendResourceCache,
         ) -> Result<(), Error> {
             let mut query = world.query::<(&A, Option<&mut OnGpu<A>>)>();
             for (entity, (asset, on_gpu)) in &mut query {
@@ -261,7 +288,7 @@ impl System for GpuLoadingSystem {
                     on_gpu_buf.as_mut().unwrap()
                 });
 
-                on_gpu.load(&asset, &load_context)?;
+                on_gpu.load(&asset, &load_context, cache)?;
 
                 if let Some(on_gpu) = on_gpu_buf {
                     command_buffer.insert_one(entity, on_gpu);
@@ -270,12 +297,18 @@ impl System for GpuLoadingSystem {
             Ok(())
         }
 
+        let cache = context
+            .resources
+            .get_mut_or_insert_default::<BackendResourceCache>();
+
         let mut render_targets = context.world.query::<&RenderTarget>();
 
         // for each RenderTarget, load assets to its backend
         //
         // this could be done more efficiently, especially if `RenderTarget`s share
         // backends (e.g. on WEBGPU)
+        //
+        // todo: don't just load everything onto every backend -.-
         for (_entity, render_target) in &mut render_targets {
             let render_target = render_target.inner.get();
             let load_context = LoadContext {
@@ -283,8 +316,18 @@ impl System for GpuLoadingSystem {
                 pipeline: &render_target.pipeline,
             };
 
-            load::<Mesh>(&load_context, &context.world, &mut self.command_buffer)?;
-            load::<Material>(&load_context, &context.world, &mut self.command_buffer)?;
+            load::<Mesh>(
+                &load_context,
+                &context.world,
+                &mut self.command_buffer,
+                cache,
+            )?;
+            load::<Material>(
+                &load_context,
+                &context.world,
+                &mut self.command_buffer,
+                cache,
+            )?;
         }
 
         drop(render_targets);

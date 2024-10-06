@@ -26,8 +26,8 @@ use self::map::Map;
 use crate::{
     app::components::dock::Dock,
     assets::{
-        AssetsPlugin,
-        Load,
+        load::Load,
+        system::AssetsPlugin,
     },
     error::Error,
     graphics::{

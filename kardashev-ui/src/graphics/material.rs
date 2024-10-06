@@ -14,9 +14,12 @@ use super::{
 };
 use crate::{
     assets::{
-        Asset,
+        load::{
+            LoadAssetContext,
+            LoadFromAsset,
+        },
         AssetNotFound,
-        Loader,
+        MaybeHasAssetId,
     },
     graphics::texture::{
         LoadTextureError,
@@ -42,47 +45,57 @@ impl Material {
     }
 }
 
-impl Asset for Material {
+impl MaybeHasAssetId for Material {
+    fn maybe_asset_id(&self) -> Option<AssetId> {
+        self.asset_id
+    }
+}
+
+impl LoadFromAsset for Material {
     type Dist = dist::Material;
-    type LoadError = LoadMaterialError;
+    type Error = LoadMaterialError;
+    type Args = ();
 
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
-        loader: &'a mut Loader<'b>,
-    ) -> Result<Self, Self::LoadError> {
+        _args: (),
+        context: &'a mut LoadAssetContext<'b>,
+    ) -> Result<Self, Self::Error> {
         tracing::debug!(%asset_id, "loading material");
 
         // we don't use the cache for materials, since the textures are cached anyway
 
-        let metadata = loader
+        let metadata = context
             .dist_assets
             .get::<dist::Material>(asset_id)
             .ok_or_else(|| AssetNotFound { asset_id })?;
 
         async fn load_material_texture<'a, 'b: 'a>(
             asset_id: Option<AssetId>,
-            loader: &'a mut Loader<'b>,
+            loader: &'a mut LoadAssetContext<'b>,
         ) -> Result<Option<Texture>, LoadTextureError> {
             if let Some(asset_id) = asset_id {
-                Ok(Some(<Texture as Asset>::load(asset_id, loader).await?))
+                Ok(Some(
+                    <Texture as LoadFromAsset>::load(asset_id, (), loader).await?,
+                ))
             }
             else {
                 Ok(None)
             }
         }
 
-        let mut loader = Loader {
-            dist_assets: &loader.dist_assets,
-            client: &loader.client,
-            cache: &mut loader.cache,
+        let mut context = LoadAssetContext {
+            dist_assets: &context.dist_assets,
+            client: &context.client,
+            cache: &mut context.cache,
         };
 
-        let ambient = load_material_texture(metadata.ambient, &mut loader).await?;
-        let diffuse = load_material_texture(metadata.diffuse, &mut loader).await?;
-        let specular = load_material_texture(metadata.specular, &mut loader).await?;
-        let normal = load_material_texture(metadata.normal, &mut loader).await?;
-        let shininess = load_material_texture(metadata.shininess, &mut loader).await?;
-        let dissolve = load_material_texture(metadata.dissolve, &mut loader).await?;
+        let ambient = load_material_texture(metadata.ambient, &mut context).await?;
+        let diffuse = load_material_texture(metadata.diffuse, &mut context).await?;
+        let specular = load_material_texture(metadata.specular, &mut context).await?;
+        let normal = load_material_texture(metadata.normal, &mut context).await?;
+        let shininess = load_material_texture(metadata.shininess, &mut context).await?;
+        let dissolve = load_material_texture(metadata.dissolve, &mut context).await?;
 
         let material_data = MaterialData {
             ambient,

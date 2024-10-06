@@ -6,10 +6,6 @@ edition = "2021"
 [dependencies.kardashev-protocol]
 workspace = true
 
-[dependencies.kardashev-build]
-workspace = true
-features = ["server"]
-
 [dependencies]
 axum = { version = "0.7", features = ["http2", "tracing", "ws"] }
 chrono = "0.4.38"

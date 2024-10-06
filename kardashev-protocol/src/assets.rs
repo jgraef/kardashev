@@ -90,13 +90,15 @@ pub struct Texture {
     pub v_edge_mode: Option<TextureEdgeMode>,
 }
 
+impl HasAssetId for Texture {
+    fn asset_id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl Asset for Texture {
     const TYPE_NAME: &'static str = "texture";
     const TYPE_ID: Uuid = uuid!("f4c83063-accc-4565-82a9-04df9582ec69");
-
-    fn id(&self) -> AssetId {
-        self.id
-    }
 
     fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
         std::iter::once(&*self.image)
@@ -151,13 +153,15 @@ pub struct Material {
     pub dissolve: Option<AssetId>,
 }
 
+impl HasAssetId for Material {
+    fn asset_id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl Asset for Material {
     const TYPE_NAME: &'static str = "material";
     const TYPE_ID: Uuid = uuid!("ec98ef77-e2ce-4cc8-baf2-28cf53b88171");
-
-    fn id(&self) -> AssetId {
-        self.id
-    }
 
     fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
         std::iter::empty()
@@ -174,13 +178,15 @@ pub struct Mesh {
     pub label: Option<String>,
 }
 
+impl HasAssetId for Mesh {
+    fn asset_id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl Asset for Mesh {
     const TYPE_NAME: &'static str = "mesh";
     const TYPE_ID: Uuid = uuid!("15668e5b-73aa-4895-8c70-3cf0346251eb");
-
-    fn id(&self) -> AssetId {
-        self.id
-    }
 
     fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
         std::iter::once(&*self.mesh)
@@ -227,13 +233,15 @@ pub struct Shader {
     pub naga_ir: String,
 }
 
+impl HasAssetId for Shader {
+    fn asset_id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl Asset for Shader {
     const TYPE_NAME: &'static str = "shader";
     const TYPE_ID: Uuid = uuid!("ae943412-b95a-4097-8441-6e5a58905655");
-
-    fn id(&self) -> AssetId {
-        self.id
-    }
 
     fn files<'a>(&'a self) -> impl Iterator<Item = &'a str> {
         std::iter::once(&*self.naga_ir)
@@ -247,11 +255,14 @@ pub struct CompiledShader {
     pub module_info: naga::valid::ModuleInfo,
 }
 
-pub trait Asset: Serialize + DeserializeOwned + Send + Sync + 'static {
+pub trait HasAssetId {
+    fn asset_id(&self) -> AssetId;
+}
+
+pub trait Asset: HasAssetId + Serialize + DeserializeOwned + Send + Sync + 'static {
     const TYPE_NAME: &'static str;
     const TYPE_ID: Uuid;
 
-    fn id(&self) -> AssetId;
     fn files<'a>(&'a self) -> impl Iterator<Item = &'a str>;
 }
 
@@ -268,8 +279,10 @@ impl Assets {
     }
 
     pub fn insert<A: Asset>(&mut self, asset: A) {
-        self.assets
-            .insert(asset.id(), (Box::new(asset), DynAssetType::new::<A>()));
+        self.assets.insert(
+            asset.asset_id(),
+            (Box::new(asset), DynAssetType::new::<A>()),
+        );
     }
 
     pub fn blob(&self) -> AssetsBlob {

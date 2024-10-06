@@ -8,6 +8,7 @@ use clap::{
     Parser,
 };
 use color_eyre::eyre::Error;
+use tracing_subscriber::EnvFilter;
 
 const STYLES: styling::Styles = styling::Styles::styled()
     .header(styling::AnsiColor::Green.on_default().bold())
@@ -43,7 +44,10 @@ impl Args {
 async fn main() -> Result<(), Error> {
     dotenvy::dotenv().ok();
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .pretty()
+        .init();
 
     let args = Args::parse();
     args.run().await?;

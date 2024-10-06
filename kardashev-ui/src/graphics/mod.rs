@@ -35,8 +35,9 @@ use transform::LocalToGlobalTransformSystem;
 use web_sys::HtmlCanvasElement;
 
 use crate::{
-    assets::AssetTypeRegistry,
+    assets::system::AssetTypeRegistry,
     graphics::{
+        loading::BackendResourceCache,
         material::Material,
         mesh::Mesh,
         rendering_system::RenderingSystem,
@@ -482,6 +483,8 @@ impl Plugin for RenderPlugin {
         else {
             tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");
         }
+
+        context.resources.insert(BackendResourceCache::default());
 
         context
             .scheduler

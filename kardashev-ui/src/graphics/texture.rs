@@ -20,9 +20,12 @@ use crate::assets::{
         self,
         AssetClientLoadImageExt,
     },
-    Asset,
+    load::{
+        LoadAssetContext,
+        LoadFromAsset,
+    },
     AssetNotFound,
-    Loader,
+    MaybeHasAssetId,
 };
 
 #[derive(Clone, Debug)]
@@ -40,17 +43,25 @@ impl From<RgbaImage> for Texture {
     }
 }
 
-impl Asset for Texture {
+impl MaybeHasAssetId for Texture {
+    fn maybe_asset_id(&self) -> Option<AssetId> {
+        self.asset_id
+    }
+}
+
+impl LoadFromAsset for Texture {
     type Dist = dist::Texture;
-    type LoadError = LoadTextureError;
+    type Error = LoadTextureError;
+    type Args = ();
 
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
-        loader: &'a mut Loader<'b>,
-    ) -> Result<Self, Self::LoadError> {
+        _args: (),
+        context: &'a mut LoadAssetContext<'b>,
+    ) -> Result<Self, Self::Error> {
         tracing::debug!(%asset_id, "loading texture");
 
-        let metadata = loader
+        let metadata = context
             .dist_assets
             .get::<dist::Texture>(asset_id)
             .ok_or_else(|| AssetNotFound { asset_id })?;
@@ -59,11 +70,11 @@ impl Asset for Texture {
             todo!("refactor texture atlas system");
         }
 
-        let texture_data = loader
+        let texture_data = context
             .cache
             .get_or_try_insert_async(asset_id, || {
                 async {
-                    let image = loader.client.load_image(&metadata.image).await?;
+                    let image = context.client.load_image(&metadata.image).await?;
                     Ok::<_, LoadTextureError>(Arc::new(TextureData { image }))
                 }
             })

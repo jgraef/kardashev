@@ -20,9 +20,12 @@ use super::loading::{
     LoadContext,
 };
 use crate::assets::{
-    Asset,
+    load::{
+        LoadAssetContext,
+        LoadFromAsset,
+    },
     AssetNotFound,
-    Loader,
+    MaybeHasAssetId,
 };
 
 #[derive(Debug)]
@@ -32,24 +35,32 @@ pub struct Mesh {
     pub mesh_data: Arc<MeshData>,
 }
 
-impl Asset for Mesh {
+impl MaybeHasAssetId for Mesh {
+    fn maybe_asset_id(&self) -> Option<AssetId> {
+        self.asset_id
+    }
+}
+
+impl LoadFromAsset for Mesh {
     type Dist = dist::Mesh;
-    type LoadError = MeshLoadError;
+    type Error = MeshLoadError;
+    type Args = ();
 
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
-        loader: &'a mut Loader<'b>,
+        _args: (),
+        context: &'a mut LoadAssetContext<'b>,
     ) -> Result<Self, MeshLoadError> {
-        let metadata = loader
+        let metadata = context
             .dist_assets
             .get::<dist::Mesh>(asset_id)
             .ok_or_else(|| AssetNotFound { asset_id })?;
 
-        let mesh_data = loader
+        let mesh_data = context
             .cache
             .get_or_try_insert_async(asset_id, || {
                 async {
-                    let bytes = loader
+                    let bytes = context
                         .client
                         .download_file(&metadata.mesh)
                         .await?
