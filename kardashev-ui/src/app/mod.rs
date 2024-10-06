@@ -4,6 +4,7 @@ mod map;
 use components::window::provide_graphics;
 use kardashev_client::ApiClient;
 use kardashev_protocol::asset_id;
+use kardashev_style::style;
 use leptos::{
     component,
     expect_context,
@@ -48,7 +49,8 @@ use crate::{
     },
 };
 
-crate::style!("src/app/app.scss");
+#[style(path = "src/app/app.scss")]
+struct Style;
 
 #[derive(Clone, Debug)]
 struct Urls {
@@ -89,9 +91,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Router>
-            <div class=Style::APP>
+            <div class=Style::app>
                 <Dock />
-                <main class=Style::MAIN>
+                <main class=Style::main>
                     <Routes>
                         <Route path="/" view=|| view!{ <Redirect path="/dashboard"/> } />
                         <Route path="/dashboard" view=|| view!{ "TODO: Dashboard" } />

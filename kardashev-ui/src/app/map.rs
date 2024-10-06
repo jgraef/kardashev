@@ -1,4 +1,5 @@
 use hecs::Entity;
+use kardashev_style::style;
 use leptos::{
     component,
     expect_context,
@@ -48,7 +49,8 @@ use crate::{
     },
 };
 
-crate::style!("src/app/map.scss");
+#[style(path = "src/app/map.scss")]
+struct Style;
 
 #[component]
 pub fn Map() -> impl IntoView {

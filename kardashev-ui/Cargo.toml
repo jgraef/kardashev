@@ -9,6 +9,9 @@ workspace = true
 [dependencies.kardashev-client]
 workspace = true
 
+[dependencies.kardashev-style]
+workspace = true
+
 [dependencies]
 bytemuck = { version = "1.15", features = ["derive"] }
 console_error_panic_hook = "0.1"
@@ -43,20 +46,10 @@ gloo-timers = { version = "0.3.0", features = ["futures"] }
 codee = "0.2.0"
 bitflags = "2.6.0"
 rmp-serde = "1.3.0"
-turf = "0.9.3"
 
-[package.metadata.turf]
-minify = false
-load_paths = ["src/prelude/"]
-
-[package.metadata.turf.class_names]
-template = "kardashev-<original_name>-<id>"
-excludes = []
-
-[package.metadata.turf.browser_targets]
-chrome = [80, 1, 2]
-firefox = 65
-safari = [12, 3]
-
-[package.metadata.turf.file_output]
-global_css_file_path = "target/kardashev-ui.css"
+[package.metadata.kardashev.style]
+# Specify a directory to which to write the output CSS.
+# output = "some/path/to/an/output/directory"
+#
+# Alternative name to use in class names and for output files.
+crate_name = "kardashev"

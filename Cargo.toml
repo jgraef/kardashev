@@ -7,6 +7,9 @@ members = [
     "kardashev-lab",
     "kardashev-protocol",
     "kardashev-server",
+    "kardashev-style",
+    "kardashev-style-internal",
+    "kardashev-style-macro",
     "kardashev-ui",
 ]
 
@@ -24,4 +27,8 @@ version = "0.1.0"
 
 [workspace.dependencies.kardashev-server]
 path = "kardashev-server"
+version = "0.1.0"
+
+[workspace.dependencies.kardashev-style]
+path = "kardashev-style"
 version = "0.1.0"

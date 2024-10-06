@@ -3,7 +3,11 @@ mod wasm_bindgen;
 
 use std::{
     fs::File,
-    io::BufWriter,
+    io::{
+        BufReader,
+        BufWriter,
+        Read,
+    },
     path::Path,
 };
 
@@ -55,10 +59,7 @@ pub async fn compile_ui(
         .join("wasm32-unknown-unknown")
         .join("debug")
         .join(format!("{target_name}.wasm"));
-    let target_css_path = workspace_path
-        .join("target")
-        .join(format!("{target_name}.css"));
-    tracing::debug!(target_wasm_path = %target_wasm_path.display(), target_css_path = %target_css_path.display());
+    tracing::debug!(target_wasm_path = %target_wasm_path.display());
 
     let wasm_filename = format!("{target_name}_bg.wasm");
     let js_filename = format!("{target_name}.js");
@@ -89,7 +90,21 @@ pub async fn compile_ui(
     tracing::info!(target = %target_name, "running `wasm-bindgen`");
     wasm_bindgen(&target_wasm_path, output_path, &target_name).await?;
 
-    std::fs::copy(&target_css_path, output_path.join(&css_filename))?;
+    tracing::info!("collecting CSS");
+    let css_path = workspace_path.join("target").join("css");
+    let mut css_buf = vec![];
+    for result in std::fs::read_dir(&css_path)? {
+        let entry = result?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.starts_with("kardashev-") {
+            let mut reader = BufReader::new(File::open(&entry.path())?);
+            reader.read_to_end(&mut css_buf)?;
+        }
+    }
+    let css_output_path = output_path.join(&css_filename);
+    tracing::debug!(path = %css_output_path.display(), "writing CSS file");
+    std::fs::write(&css_output_path, &css_buf)?;
 
     tracing::debug!(target = %target_name, "generating `index.html`");
     let mut writer = BufWriter::new(File::create(output_path.join(&index_filename))?);

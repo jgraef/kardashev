@@ -1,3 +1,4 @@
+use kardashev_style::style;
 use leptos::{
     component,
     view,
@@ -7,7 +8,8 @@ use leptos::{
     SignalGet,
 };
 
-crate::style!("src/app/components/icon.scss");
+#[style(path = "src/app/components/icon.scss")]
+struct Style;
 
 #[component]
 pub fn BootstrapIcon(
@@ -20,6 +22,6 @@ pub fn BootstrapIcon(
 #[component]
 pub fn KardashevIcon() -> impl IntoView {
     view! {
-        <img src="/assets/kardashev.svg" class=Style::KARDASHEV_ICON />
+        <img src="/assets/kardashev.svg" class=Style::kardashev_icon />
     }
 }

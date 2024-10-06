@@ -35,15 +35,3 @@ fn main() {
 
     leptos::mount_to(root, App);
 }
-
-#[macro_export]
-macro_rules! style {
-    ($path:expr) => {
-        #[doc(hidden)]
-        mod __style {
-            turf::style_sheet!($path);
-            pub type Style = ClassName;
-        }
-        pub type Style = __style::Style;
-    };
-}

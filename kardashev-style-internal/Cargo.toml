@@ -1,0 +1,13 @@
+[package]
+name = "kardashev-style-internal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0.64"
+lightningcss = { version = "=1.0.0-alpha.58", default-features = false, features = ["grid", "visitor"] }
+grass = { version = "0.13.0", default-features = false }
+fasthash = "0.4.0"
+bs58 = "0.5.1"
+serde = { version = "1.0.210", features = ["derive"] }
+toml = "0.8.19"

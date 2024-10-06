@@ -1,0 +1,7 @@
+[package]
+name = "kardashev-style"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.kardashev-style-macro]
+path = "../kardashev-style-macro"

@@ -1,3 +1,4 @@
+use kardashev_style::style;
 use leptos::{
     component,
     create_effect,
@@ -39,7 +40,8 @@ use crate::{
     utils::spawn_local_and_handle_error,
 };
 
-crate::style!("src/app/components/window.scss");
+#[style(path = "src/app/components/window.scss")]
+struct Style;
 
 pub fn provide_graphics() {
     tracing::debug!("creating renderer");
@@ -147,7 +149,7 @@ where
     view! {
         <div
             node_ref=container_node_ref
-            class=Style::WINDOW
+            class=Style::window
         >
             <canvas
                 node_ref=canvas_node_ref

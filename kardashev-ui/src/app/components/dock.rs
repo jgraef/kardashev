@@ -1,3 +1,4 @@
+use kardashev_style::style;
 use leptos::{
     component,
     view,
@@ -11,7 +12,8 @@ use leptos_router::{
 
 use super::icon::BootstrapIcon;
 
-crate::style!("src/app/components/dock.scss");
+#[style(path = "src/app/components/dock.scss")]
+struct Style;
 
 #[component]
 pub fn Item<H: ToHref + 'static>(
@@ -20,8 +22,8 @@ pub fn Item<H: ToHref + 'static>(
     #[prop(into)] label: Oco<'static, str>,
 ) -> impl IntoView {
     view! {
-        <li class=Style::ITEM>
-            <A href={href} active_class="active" class=Style::LINK>
+        <li class=Style::item>
+            <A href={href} active_class="active" class=Style::link>
                 <BootstrapIcon icon=icon alt=label />
             </A>
         </li>
@@ -31,12 +33,12 @@ pub fn Item<H: ToHref + 'static>(
 #[component]
 pub fn Dock() -> impl IntoView {
     view! {
-        <nav class=Style::DOCK>
-            <ul class=Style::GROUP_TOP>
+        <nav class=Style::dock>
+            <ul class=Style::group_top>
                 <Item href="/dashboard" icon="speedometer" label="Dashboard" />
                 <Item href="/map" icon="radar" label="Map" />
             </ul>
-            <ul class=Style::GROUP_BOTTOM>
+            <ul class=Style::group_bottom>
                 <Item href="/settings" icon="gear" label="Settings" />
             </ul>
         </nav>
