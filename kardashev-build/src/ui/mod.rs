@@ -91,16 +91,12 @@ pub async fn compile_ui(
     wasm_bindgen(&target_wasm_path, output_path, &target_name).await?;
 
     tracing::info!("collecting CSS");
-    let css_path = workspace_path.join("target").join("css");
+    let css_path = workspace_path.join("target").join("css").join("kardashev-ui");
     let mut css_buf = vec![];
     for result in std::fs::read_dir(&css_path)? {
         let entry = result?;
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if file_name.starts_with("kardashev-") {
-            let mut reader = BufReader::new(File::open(&entry.path())?);
-            reader.read_to_end(&mut css_buf)?;
-        }
+        let mut reader = BufReader::new(File::open(&entry.path())?);
+        reader.read_to_end(&mut css_buf)?;
     }
     let css_output_path = output_path.join(&css_filename);
     tracing::debug!(path = %css_output_path.display(), "writing CSS file");

@@ -161,7 +161,7 @@ pub fn prepare_import(input_path: &Path, track: impl FnMut(&Path)) -> Result<Out
     let output_path = metadata
         .output
         .as_deref()
-        .unwrap_or_else(|| Path::new("./target/css/"));
+        .unwrap_or_else(|| Path::new("./target/css/kardashev-ui"));
     std::fs::create_dir_all(output_path).map_err(|source| {
         Error::CreateDirectory {
             source,

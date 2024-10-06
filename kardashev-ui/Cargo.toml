@@ -49,7 +49,7 @@ rmp-serde = "1.3.0"
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.
-# output = "some/path/to/an/output/directory"
+output = "target/css/kardashev-ui"
 #
 # Alternative name to use in class names and for output files.
 crate_name = "kardashev"
