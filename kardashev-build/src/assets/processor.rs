@@ -256,8 +256,9 @@ impl Processor {
             for (data, crop) in atlas.allocations {
                 dist_assets.insert(dist::Texture {
                     id: data.id,
-                    image: filename.clone(),
                     label: data.label,
+                    build_time,
+                    image: filename.clone(),
                     size: dist::TextureSize {
                         w: atlas.image_size[0],
                         h: atlas.image_size[1],

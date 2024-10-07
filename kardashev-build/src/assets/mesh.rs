@@ -54,8 +54,9 @@ impl Asset for Mesh {
 
         context.dist_assets.insert(dist::Mesh {
             id,
-            mesh: filename,
             label: self.label.clone(),
+            build_time: context.build_time,
+            mesh: filename,
         });
 
         context.set_build_time(id);

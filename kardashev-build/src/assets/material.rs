@@ -139,6 +139,7 @@ impl Asset for Material {
         context.dist_assets.insert(dist::Material {
             id,
             label: self.label.clone(),
+            build_time: context.build_time,
             ambient,
             diffuse,
             specular,

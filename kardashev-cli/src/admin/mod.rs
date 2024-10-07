@@ -15,7 +15,7 @@ use crate::admin::import_stars::import_stars;
 /// Send administrative commands to the server API.
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    #[arg(long, short, env = "KARDASHEV_API_URL")]
+    #[arg(long, short, env = "KARDASHEV_API_URL", default_value = "http://localhost:3333")]
     api_url: Url,
 
     #[command(subcommand)]

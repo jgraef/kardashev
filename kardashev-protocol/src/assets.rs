@@ -76,6 +76,8 @@ pub struct Texture {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 
+    pub build_time: DateTime<Utc>,
+
     pub image: String,
 
     pub size: TextureSize,
@@ -134,6 +136,8 @@ pub struct Material {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 
+    pub build_time: DateTime<Utc>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ambient: Option<AssetId>,
 
@@ -172,10 +176,12 @@ impl Asset for Material {
 pub struct Mesh {
     pub id: AssetId,
 
-    pub mesh: String,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+
+    pub build_time: DateTime<Utc>,
+
+    pub mesh: String,
 }
 
 impl HasAssetId for Mesh {
@@ -229,6 +235,8 @@ pub struct Shader {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+
+    pub build_time: DateTime<Utc>,
 
     pub naga_ir: String,
 }

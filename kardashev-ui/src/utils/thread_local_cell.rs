@@ -1,9 +1,11 @@
-use std::thread::{
-    self,
-    ThreadId,
+use std::{
+    fmt::Debug,
+    thread::{
+        self,
+        ThreadId,
+    },
 };
 
-#[derive(Debug)]
 pub struct ThreadLocalCell<T> {
     inner: T,
     created_on: ThreadId,
@@ -33,6 +35,14 @@ impl<T> ThreadLocalCell<T> {
     pub fn try_get_mut(&mut self) -> Result<&mut T, ThreadLocalCellError> {
         check_thread(self.created_on)?;
         Ok(&mut self.inner)
+    }
+}
+
+impl<T> Debug for ThreadLocalCell<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThreadLocalCell")
+            .field("created_on", &self.created_on)
+            .finish_non_exhaustive()
     }
 }
 

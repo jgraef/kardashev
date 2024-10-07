@@ -59,7 +59,7 @@ impl LoadFromAsset for Material {
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
         _args: (),
-        context: &'a mut LoadAssetContext<'b>,
+        mut context: &'a mut LoadAssetContext<'b>,
     ) -> Result<Self, Self::Error> {
         tracing::debug!(%asset_id, "loading material");
 
@@ -83,12 +83,6 @@ impl LoadFromAsset for Material {
                 Ok(None)
             }
         }
-
-        let mut context = LoadAssetContext {
-            dist_assets: &context.dist_assets,
-            client: &context.client,
-            cache: &mut context.cache,
-        };
 
         let ambient = load_material_texture(metadata.ambient, &mut context).await?;
         let diffuse = load_material_texture(metadata.diffuse, &mut context).await?;

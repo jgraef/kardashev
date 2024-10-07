@@ -19,12 +19,14 @@ use crate::{
         },
         load::{
             LoadAssetContext,
+            LoadAsync,
             LoadFromAsset,
         },
         Error,
     },
     utils::{
-        any_cache::AnyCache,
+        any_cache::AnyArcCache,
+        file_store::FileStore,
         spawn_local_and_handle_error,
     },
 };
@@ -58,6 +60,16 @@ impl AssetServer {
         rx
     }
 
+    pub fn load<A: LoadFromAsset>(
+        &self,
+        asset_id: AssetId,
+        args: <A as LoadFromAsset>::Args,
+    ) -> LoadAsync<A> {
+        LoadAsync {
+            rx: self.start_load(asset_id, args),
+        }
+    }
+
     pub fn register_asset_type<A: LoadFromAsset>(&self) {
         self.send_command(Command::RegisterAssetType {
             asset_type: DynAssetType::new::<A>(),
@@ -68,8 +80,9 @@ impl AssetServer {
 #[derive(Debug)]
 struct Reactor {
     client: AssetClient,
+    file_store: FileStore,
     assets: dist::Assets,
-    cache: AnyCache<AssetId>,
+    cache: AnyArcCache<AssetId>,
     rx_command: mpsc::UnboundedReceiver<Command>,
 }
 
@@ -85,10 +98,13 @@ impl Reactor {
                 tracing::warn!("unrecognized asset type: {ty:?}");
             }
 
+            let file_store = FileStore::open("asset-files").await?;
+
             let reactor = Self {
                 client,
+                file_store,
                 assets,
-                cache: AnyCache::default(),
+                cache: AnyArcCache::default(),
                 rx_command,
             };
 
@@ -137,6 +153,7 @@ impl Reactor {
                 let mut loader = LoadAssetContext {
                     dist_assets: &self.assets,
                     client: &self.client,
+                    file_store: &self.file_store,
                     cache: &mut self.cache,
                 };
                 load_request.load(&mut loader).await;

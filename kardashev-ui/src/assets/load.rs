@@ -1,8 +1,14 @@
 use std::{
     fmt::Debug,
     future::Future,
+    pin::Pin,
+    task::{
+        Context,
+        Poll,
+    },
 };
 
+use futures::FutureExt;
 use kardashev_client::AssetClient;
 use kardashev_protocol::assets::{
     self as dist,
@@ -13,7 +19,10 @@ use tokio::sync::oneshot;
 
 use crate::{
     assets::MaybeHasAssetId,
-    utils::any_cache::AnyCache,
+    utils::{
+        any_cache::AnyArcCache,
+        file_store::FileStore,
+    },
 };
 
 /// Trait for assets that can be loaded from the asset API.
@@ -95,5 +104,20 @@ pub(super) enum LoadAssetState<A: LoadFromAsset> {
 pub struct LoadAssetContext<'a> {
     pub dist_assets: &'a dist::Assets,
     pub client: &'a AssetClient,
-    pub cache: &'a mut AnyCache<AssetId>,
+    pub file_store: &'a FileStore,
+    pub cache: &'a mut AnyArcCache<AssetId>,
+}
+
+pub struct LoadAsync<A: LoadFromAsset> {
+    pub(super) rx: oneshot::Receiver<Result<A, <A as LoadFromAsset>::Error>>,
+}
+
+impl<A: LoadFromAsset> Future for LoadAsync<A> {
+    type Output = Result<A, <A as LoadFromAsset>::Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.rx
+            .poll_unpin(cx)
+            .map(|result| result.expect("asset server died"))
+    }
 }

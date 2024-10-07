@@ -29,7 +29,7 @@ use crate::{
         mesh::Mesh,
     },
     utils::{
-        any_cache::AnyCache,
+        any_cache::AnyArcCache,
         thread_local_cell::ThreadLocalCell,
     },
     world::{
@@ -94,11 +94,14 @@ impl<A: GpuAsset> OnGpu<A> {
                 tracing::debug!(asset_type = type_name::<A>(), backend_id = ?context.backend.id(), "loading asset to gpu");
 
                 let resource = if let Some(asset_id) = asset.maybe_asset_id() {
-                    cache
+                    // BackendResource wraps the Arc, but we need to pass an Arc to the cache, so we
+                    // take out the inner and later put it back in
+                    let inner = cache
                         .cache
                         .get_or_try_insert((asset_id, context.backend.id()), || {
-                            Ok::<_, Error>(BackendResource::new(asset.load(context)?))
-                        })?
+                            Ok::<_, Error>(BackendResource::new(asset.load(context)?).inner)
+                        })?;
+                    BackendResource { inner }
                 }
                 else {
                     BackendResource::new(asset.load(context)?)
@@ -184,26 +187,47 @@ impl<R> BackendResourceId<R> {
     }
 }
 
-/// Container that holds the backend resource's ID and wraps the resource in an
-/// `Arc<ThreadLocalCell<_>>`, such that it is `Send + Sync` and can be cloned.
 #[derive(Debug)]
 pub struct BackendResource<R> {
+    inner: Arc<BackendResourceInner<R>>,
+}
+
+#[derive(Debug)]
+struct BackendResourceInner<R> {
     id: BackendResourceId<R>,
-    resource: Arc<ThreadLocalCell<R>>,
+    resource: ThreadLocalCell<R>,
 }
 
 impl<R> BackendResource<R> {
     pub fn new(resource: R) -> Self {
         Self {
-            id: BackendResourceId::new(),
-            resource: Arc::new(ThreadLocalCell::new(resource)),
+            inner: Arc::new(BackendResourceInner {
+                id: BackendResourceId::new(),
+                resource: ThreadLocalCell::new(resource),
+            }),
+        }
+    }
+
+    pub fn id(&self) -> BackendResourceId<R> {
+        self.inner.id
+    }
+
+    pub fn get(&self) -> &R {
+        self.inner.resource.get()
+    }
+}
+
+impl<R> Clone for BackendResource<R> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
         }
     }
 }
 
 impl<R> PartialEq for BackendResource<R> {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.inner.id == other.inner.id
     }
 }
 
@@ -217,32 +241,13 @@ impl<R> PartialOrd for BackendResource<R> {
 
 impl<R> Ord for BackendResource<R> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
+        self.inner.id.cmp(&other.inner.id)
     }
 }
 
 impl<R> Hash for BackendResource<R> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<R> Clone for BackendResource<R> {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            resource: self.resource.clone(),
-        }
-    }
-}
-
-impl<R> BackendResource<R> {
-    pub fn id(&self) -> BackendResourceId<R> {
-        self.id
-    }
-
-    pub fn get(&self) -> &R {
-        self.resource.get()
+        self.inner.id.hash(state);
     }
 }
 
@@ -254,7 +259,7 @@ impl<R> From<R> for BackendResource<R> {
 
 #[derive(Debug, Default)]
 pub struct BackendResourceCache {
-    cache: AnyCache<(AssetId, BackendId)>,
+    cache: AnyArcCache<(AssetId, BackendId)>,
 }
 
 /// Loads assets to GPU(s)

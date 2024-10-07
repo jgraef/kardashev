@@ -65,6 +65,7 @@ impl Asset for Shader {
                 context.dist_assets.insert(dist::Shader {
                     id,
                     label: self.label.clone(),
+                    build_time: context.build_time,
                     naga_ir: filename,
                 });
 

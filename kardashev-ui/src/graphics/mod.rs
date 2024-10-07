@@ -4,6 +4,7 @@ pub mod loading;
 pub mod material;
 pub mod mesh;
 pub mod model;
+pub mod pipeline;
 pub mod rendering_system;
 pub mod texture;
 pub mod transform;

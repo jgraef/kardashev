@@ -118,8 +118,9 @@ impl Asset for Texture {
 
             context.dist_assets.insert(dist::Texture {
                 id,
-                image: filename.clone(),
                 label: self.label.clone(),
+                build_time: context.build_time,
+                image: filename.clone(),
                 size,
                 crop: None,
                 u_edge_mode: None,
