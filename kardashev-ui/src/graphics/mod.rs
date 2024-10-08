@@ -44,7 +44,7 @@ use crate::{
         rendering_system::RenderingSystem,
         texture::Texture,
     },
-    utils::spawn_local_and_handle_error,
+    utils::futures::spawn_local_and_handle_error,
     world::{
         Plugin,
         RegisterPluginContext,

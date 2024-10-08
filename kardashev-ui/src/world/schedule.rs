@@ -1,4 +1,5 @@
-use futures::StreamExt;
+use std::time::Duration;
+
 use tracing::Instrument;
 
 use super::{
@@ -10,7 +11,13 @@ use super::{
     RunSystemContext,
     System,
 };
-use crate::error::Error;
+use crate::{
+    error::Error,
+    utils::futures::{
+        interval,
+        Interval,
+    },
+};
 
 pub struct Scheduler {
     pub(super) startup_systems: Vec<Box<dyn DynOneshotSystem>>,
@@ -58,13 +65,13 @@ pub(super) struct TimedSystems {
 impl TimedSystems {
     pub fn new(ups: u32) -> Self {
         Self {
-            interval: Interval::new(ups),
+            interval: interval(Duration::from_millis((1000 / ups).into())),
             systems: vec![],
         }
     }
 
     pub fn set_ups(&mut self, ups: u32) {
-        self.interval = Interval::new(ups);
+        self.interval = interval(Duration::from_millis((1000 / ups).into()));
     }
 
     pub fn add_system(&mut self, system: impl System) {
@@ -85,21 +92,5 @@ impl TimedSystems {
         }
 
         Ok(())
-    }
-}
-
-struct Interval {
-    inner: gloo_timers::future::IntervalStream,
-}
-
-impl Interval {
-    pub fn new(ups: u32) -> Self {
-        Self {
-            inner: gloo_timers::future::IntervalStream::new(1000 / ups),
-        }
-    }
-
-    pub async fn tick(&mut self) {
-        self.inner.next().await;
     }
 }

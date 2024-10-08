@@ -37,7 +37,7 @@ use crate::{
         WindowHandle,
     },
     input::mouse::MouseEvent,
-    utils::spawn_local_and_handle_error,
+    utils::futures::spawn_local_and_handle_error,
 };
 
 #[style(path = "src/app/components/window.scss")]

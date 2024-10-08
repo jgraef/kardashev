@@ -52,6 +52,8 @@ serde-wasm-bindgen = "0.6.5"
 serde_bytes = "0.11.15"
 bytes = { version = "1.7.2", features = ["serde"] }
 serde_json = "1.0.128"
+gloo-file = "0.3.0"
+wasm-streams = "0.4.1"
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

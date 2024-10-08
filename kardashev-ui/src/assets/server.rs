@@ -27,7 +27,7 @@ use crate::{
     utils::{
         any_cache::AnyArcCache,
         file_store::FileStore,
-        spawn_local_and_handle_error,
+        futures::spawn_local_and_handle_error,
     },
 };
 

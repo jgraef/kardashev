@@ -1,6 +1,6 @@
 use std::{
-    borrow::Cow,
     marker::PhantomData,
+    sync::Arc,
 };
 
 use bitflags::bitflags;
@@ -11,21 +11,14 @@ use serde::{
     Serialize,
 };
 
-use crate::utils::{
-    thread_local_cell::ThreadLocalCell,
-    webfs::path::{
-        Component,
-        Path,
-        PathBuf,
-    },
-};
+use crate::utils::thread_local_cell::ThreadLocalCell;
 
 const INODES_STORE: &'static str = "inodes";
 const BLOBS_STORE: &'static str = "blobs";
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Database {
-    database: idb::Database,
+    database: Arc<ThreadLocalCell<idb::Database>>,
 }
 
 impl Database {
@@ -82,7 +75,9 @@ impl Database {
 
         let database = open_request.await?;
 
-        Ok(Self { database })
+        Ok(Self {
+            database: Arc::new(ThreadLocalCell::new(database)),
+        })
     }
 
     pub fn transaction(
@@ -90,7 +85,7 @@ impl Database {
         scope: Scope,
         mode: idb::TransactionMode,
     ) -> Result<Transaction, Error> {
-        let transaction = self.database.transaction(scope.names(), mode)?;
+        let transaction = self.database.get().transaction(scope.names(), mode)?;
         Ok(Transaction {
             transaction,
             _lt: PhantomData,
@@ -213,69 +208,13 @@ impl<'t> Transaction<'t> {
         let blob_id = serde_wasm_bindgen::from_value(value)?;
         Ok(blob_id)
     }
-
-    async fn resolve_inode<'a, M: Clone + DeserializeOwned>(
-        &self,
-        root: &'a GetInode<M>,
-        current_directory: &'a GetInode<M>,
-        path: &Path,
-    ) -> Result<Cow<'a, GetInode<M>>, Error> {
-        let mut current_inode = Cow::Borrowed(current_directory);
-
-        for component in path.components() {
-            match &current_inode.kind {
-                InodeKind::File { .. } => {
-                    //Error::NotADirectory
-                    todo!("not a directory");
-                }
-                _ => {}
-            }
-
-            match component {
-                Component::RootDir => {
-                    current_inode = Cow::Borrowed(root);
-                }
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    current_inode = if let Some(parent_inode_id) = current_inode.parent {
-                        if let Some(parent_inode) = self.get_inode(parent_inode_id).await? {
-                            Cow::Owned(parent_inode)
-                        }
-                        else {
-                            return Err(Error::FileNotFound {
-                                path: path.to_owned(),
-                            });
-                        }
-                    }
-                    else {
-                        Cow::Borrowed(root)
-                    };
-                }
-                Component::Normal(component) => {
-                    current_inode = if let Some(child_inode) = self
-                        .get_inode_by_name(component, current_inode.parent)
-                        .await?
-                    {
-                        Cow::Owned(child_inode)
-                    }
-                    else {
-                        return Err(Error::FileNotFound {
-                            path: path.to_owned(),
-                        });
-                    };
-                }
-            }
-        }
-
-        Ok(current_inode)
-    }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
 pub struct InodeId(u32);
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
 pub struct BlobId(u32);
 
@@ -292,10 +231,11 @@ struct QueryInodes {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct InsertInode<'a, M> {
+    pub id: Option<InodeId>,
     pub parent: Option<InodeId>,
     pub file_name: &'a str,
     pub meta_data: &'a M,
-    pub kind: InodeKind,
+    pub kind: &'a InodeKind,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -309,7 +249,7 @@ pub struct GetInode<M> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum InodeKind {
-    File { blob_id: BlobId },
+    File { blob_id: Option<BlobId> },
     Directory,
 }
 
@@ -322,6 +262,8 @@ pub struct GetBlob {
 
 #[derive(Debug, Serialize)]
 pub struct InsertBlob {
+    pub id: Option<BlobId>,
+
     #[serde(with = "serde_wasm_bindgen::preserve")]
     pub data: web_sys::Blob,
 }
@@ -338,8 +280,6 @@ pub enum Error {
         message: String,
         error: ThreadLocalCell<serde_wasm_bindgen::Error>,
     },
-    #[error("file not found: {path}")]
-    FileNotFound { path: PathBuf },
 }
 
 impl From<idb::Error> for Error {
