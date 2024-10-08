@@ -5,9 +5,15 @@ Kardashev is a MMORPG browser game about interstellar colonization. It is curren
 
 ## Installation
 
-First you'll need Rust 🦀. The easiest way to install it is with [rustup](https://rustup.rs/).
+### Rust
 
-Then you'll need to install [PostgreSQL](https://www.postgresql.org/), and create a database for Kardashev:
+Kardashev is programmed in Rust 🦀, so you'll need the cargo build system, to compile it. The easiest way to install it is with [rustup](https://rustup.rs/).
+
+### Database
+
+The Kardashev server uses a PostgreSQL database to store the game state. Install PostgreSQL from the [official website](https://www.postgresql.org/), or with the package manager of your distribution.
+
+Then setup the database:
 
 ```sh
 sudo -u postgres psql
@@ -15,6 +21,16 @@ create user kardashev with encrypted password 'DATABASE PASSWORD';
 create database kardshev;
 grant all privileges on database kardashev to kardashev;
 ```
+
+### Import stars
+
+Right now the game world is pretty empty. Fill it with some stars! The CLI tool currently only accepts stars in the format from the [HYG catalog](https://github.com/astronexus/HYG-Database/blob/main/hyg/CURRENT/hygdata_v41.csv). Once you got the CSV, run:
+
+```sh
+cargo run --bin kardashev-cli -- admin import-stars --closest 1000 hygdata_v41.csv
+```
+
+This will import the 1000 stars closest to the sun.
 
 ## Usage
 

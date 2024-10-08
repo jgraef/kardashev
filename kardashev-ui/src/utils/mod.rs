@@ -1,6 +1,7 @@
 pub mod any_cache;
 pub mod file_store;
 pub mod thread_local_cell;
+pub mod webfs;
 
 use futures::{
     Future,
