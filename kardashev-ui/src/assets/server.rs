@@ -22,11 +22,11 @@ use crate::{
             LoadAsync,
             LoadFromAsset,
         },
+        store::AssetStore,
         Error,
     },
     utils::{
         any_cache::AnyArcCache,
-        file_store::FileStore,
         futures::spawn_local_and_handle_error,
     },
 };
@@ -80,7 +80,7 @@ impl AssetServer {
 #[derive(Debug)]
 struct Reactor {
     client: AssetClient,
-    file_store: FileStore,
+    asset_store: AssetStore,
     assets: dist::Assets,
     cache: AnyArcCache<AssetId>,
     rx_command: mpsc::UnboundedReceiver<Command>,
@@ -98,11 +98,11 @@ impl Reactor {
                 tracing::warn!("unrecognized asset type: {ty:?}");
             }
 
-            let file_store = FileStore::open("asset-files").await?;
+            let asset_store = AssetStore::new().await?;
 
             let reactor = Self {
                 client,
-                file_store,
+                asset_store,
                 assets,
                 cache: AnyArcCache::default(),
                 rx_command,
@@ -150,10 +150,11 @@ impl Reactor {
         match command {
             Command::Load { load_request } => {
                 tracing::debug!(asset_id = %load_request.asset_id(), asset_type = load_request.asset_type_name(), "loading asset");
+                let asset_store = self.asset_store.lock().await;
                 let mut loader = LoadAssetContext {
                     dist_assets: &self.assets,
                     client: &self.client,
-                    file_store: &self.file_store,
+                    asset_store: &asset_store,
                     cache: &mut self.cache,
                 };
                 load_request.load(&mut loader).await;

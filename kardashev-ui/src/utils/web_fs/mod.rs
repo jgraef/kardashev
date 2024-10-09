@@ -10,17 +10,21 @@ use std::{
 };
 
 use bitflags::bitflags;
-use futures::AsyncReadExt;
-use gloo_file::{
-    Blob,
-    ObjectUrl,
+use bytes::{
+    Bytes,
+    BytesMut,
 };
+use gloo_file::Blob;
 use serde::{
     de::DeserializeOwned,
     Deserialize,
     Serialize,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{
+    Mutex,
+    RwLock,
+};
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use wasm_streams::ReadableStream;
 
 use self::{
@@ -46,37 +50,6 @@ use self::{
     },
 };
 
-pub async fn open(name: Option<&str>) -> Result<WebFs, Error> {
-    use tokio::sync::Mutex;
-
-    const DATABASE_NAME: &'static str = "web_fs";
-    const DEFAULT_ROOT: &'static str = "default";
-
-    #[derive(Clone)]
-    struct Singleton {
-        database: Database,
-        locks: FileLocks,
-    }
-
-    static SINGLETON: Mutex<Option<Singleton>> = Mutex::const_new(None);
-
-    let mut singleton_guard = SINGLETON.lock().await;
-    let singleton = if let Some(singleton) = &*singleton_guard {
-        singleton.clone()
-    }
-    else {
-        let singleton = Singleton {
-            database: Database::open(DATABASE_NAME).await?,
-            locks: FileLocks::new(),
-        };
-        *singleton_guard = Some(singleton.clone());
-        singleton
-    };
-
-    let name = name.unwrap_or(DEFAULT_ROOT);
-    WebFs::open_named_root(singleton.database, singleton.locks, name).await
-}
-
 #[derive(Clone, Debug)]
 pub struct WebFs {
     database: Database,
@@ -91,57 +64,89 @@ struct State {
 }
 
 impl WebFs {
-    async fn open_named_root(
-        database: Database,
-        locks: FileLocks,
-        root: &str,
-    ) -> Result<Self, Error> {
-        let transaction = database.transaction(Scope::INODES, idb::TransactionMode::ReadOnly)?;
-        let root = if let Some(root) = transaction.get_inode_by_name(root, None).await? {
-            root
+    const DATABASE_NAME: &'static str = "web_fs";
+    const DEFAULT_ROOT: &'static str = "default";
+
+    pub async fn new() -> Result<Self, Error> {
+        Self::with_named_root(Self::DEFAULT_ROOT).await
+    }
+
+    pub async fn with_named_root(root: &str) -> Result<Self, Error> {
+        tracing::info!(root, "opening webfs");
+
+        #[derive(Clone)]
+        struct Singleton {
+            database: Database,
+            locks: FileLocks,
+        }
+
+        static SINGLETON: Mutex<Option<Singleton>> = Mutex::const_new(None);
+
+        let mut singleton_guard = SINGLETON.lock().await;
+        let singleton = if let Some(singleton) = &*singleton_guard {
+            singleton.clone()
         }
         else {
-            let meta_data = Metadata::default();
-            let inode_id = transaction
-                .insert_inode(&InsertInode {
-                    id: None,
-                    parent: None,
-                    file_name: root,
-                    meta_data: &meta_data,
-                    kind: &InodeKind::Directory,
-                })
-                .await?;
-            GetInode {
-                id: inode_id,
-                parent: None,
-                file_name: root.to_owned(),
-                meta_data,
-                kind: InodeKind::Directory,
-            }
+            let singleton = Singleton {
+                database: Database::open(Self::DATABASE_NAME).await?,
+                locks: FileLocks::new(),
+            };
+            *singleton_guard = Some(singleton.clone());
+            singleton
         };
+
+        let transaction = singleton
+            .database
+            .transaction(Scope::INODES, idb::TransactionMode::ReadWrite)?;
+        let root_directory =
+            if let Some(root_directory) = transaction.get_inode_by_name(root, None).await? {
+                root_directory
+            }
+            else {
+                tracing::debug!("creating root directory");
+
+                let meta_data = Metadata::default();
+                let inode_id = transaction
+                    .insert_inode(&InsertInode {
+                        id: None,
+                        parent: None,
+                        file_name: root,
+                        meta_data: &meta_data,
+                        kind: &InodeKind::Directory,
+                    })
+                    .await?;
+
+                tracing::trace!(root_inode_id = ?inode_id);
+
+                GetInode {
+                    id: inode_id,
+                    parent: None,
+                    file_name: root.to_owned(),
+                    meta_data,
+                    kind: InodeKind::Directory,
+                }
+            };
 
         transaction.commit()?;
 
-        Ok(Self::new(database, locks, root))
-    }
-
-    fn new(database: Database, locks: FileLocks, root_directory: GetInode<Metadata>) -> Self {
-        Self {
-            database,
-            locks,
+        Ok(Self {
+            database: singleton.database,
+            locks: singleton.locks,
             state: Arc::new(State {
                 root_directory: root_directory.clone(),
                 current_directory: RwLock::new(root_directory),
             }),
-        }
+        })
     }
 
     pub async fn open(
         &self,
         path: impl AsRef<Path>,
-        open_options: OpenOptions,
+        open_options: &OpenOptions,
     ) -> Result<File, Error> {
         let path = path.as_ref();
+
+        tracing::debug!(%path, ?open_options, "opening file");
 
         let create = open_options
             .inner
@@ -157,7 +162,9 @@ impl WebFs {
             .database
             .transaction(Scope::INODES, inode_transaction_mode)?;
 
-        let (mut inode, inode_dirty) = {
+        let mut inode_dirty = false;
+        let mut was_created = false;
+        let inode = {
             let current_directory = self.state.current_directory.read().await;
 
             match resolve_inode(
@@ -169,6 +176,8 @@ impl WebFs {
             .await
             {
                 Ok(inode) => {
+                    tracing::trace!(inode_id = ?inode.id, "resolved path");
+
                     if open_options.inner.contains(OpenOptionsInner::CREATE_NEW) {
                         return Err(Error::AlreadyExists {
                             path: path.to_owned(),
@@ -176,7 +185,7 @@ impl WebFs {
                     }
 
                     match inode.kind {
-                        InodeKind::File { blob_id: _ } => (inode.into_owned(), false),
+                        InodeKind::File { blob_id: _ } => inode.into_owned(),
                         InodeKind::Directory => {
                             return Err(Error::IsADirectory {
                                 path: path.to_owned(),
@@ -193,18 +202,16 @@ impl WebFs {
                     });
                 }
                 Err(ResolveInodeError::FileNotFound {
-                    mut components,
+                    components,
+                    component,
                     current_inode,
                 }) => {
                     // check if it the file was not found because the last component is missing and
                     // is the file we want to create
                     let mut can_create_file_name = None;
                     if create {
-                        let next_component = components
-                            .next()
-                            .expect("expected at least one more path component");
-                        if components.next().is_none() {
-                            match next_component {
+                        if components.remaining_path().is_empty() {
+                            match component {
                                 Component::Normal(file_name) => {
                                     can_create_file_name = Some(file_name)
                                 }
@@ -231,8 +238,10 @@ impl WebFs {
                             meta_data: Metadata::default(),
                             kind: InodeKind::File { blob_id: None },
                         };
+                        inode_dirty = true;
+                        was_created = true;
 
-                        (inode, true)
+                        inode
                     }
                     else {
                         return Err(Error::FileNotFound {
@@ -243,48 +252,14 @@ impl WebFs {
             }
         };
 
-        let mut data = None;
-        if open_options.inner.contains(OpenOptionsInner::READ)
-            || (open_options
-                .inner
-                .intersects(OpenOptionsInner::WRITE | OpenOptionsInner::APPEND)
-                && !open_options.inner.contains(OpenOptionsInner::TRUNCATE))
-        {
-            match &inode.kind {
-                InodeKind::File { blob_id } => {
-                    if let Some(blob_id) = blob_id {
-                        if let Some(blob) = transaction.get_blob(*blob_id).await? {
-                            data = Some(blob.data.into());
-                        }
-                    }
-                }
-                _ => panic!("inode is not a file"),
-            }
-        }
-
-        let mut data_dirty = false;
-        if open_options.inner.contains(OpenOptionsInner::TRUNCATE) {
-            match &mut inode.kind {
-                InodeKind::File { blob_id } => {
-                    if let Some(_blob_id) = blob_id {
-                        assert!(data.is_none());
-                        data_dirty = true;
-                    }
-                    *blob_id = None;
-                }
-                _ => panic!("inode is not a file"),
-            }
-        }
-
         transaction.commit()?;
 
         Ok(File {
             web_fs: self.clone(),
-            open_options,
+            open_options: open_options.clone(),
             inode,
-            data: data.unwrap_or_else(|| Blob::new(&b""[..])),
             inode_dirty,
-            data_dirty,
+            was_created,
         })
     }
 }
@@ -294,9 +269,8 @@ pub struct File {
     web_fs: WebFs,
     open_options: OpenOptions,
     inode: GetInode<Metadata>,
-    data: Blob,
     inode_dirty: bool,
-    data_dirty: bool,
+    was_created: bool,
 }
 
 impl File {
@@ -313,49 +287,19 @@ impl File {
         &mut self.inode.meta_data
     }
 
-    pub async fn flush(&mut self) -> Result<(), Error> {
-        if !self.data_dirty && !self.inode_dirty {
+    pub fn was_created(&self) -> bool {
+        self.was_created
+    }
+
+    pub async fn flush_inode(&mut self) -> Result<(), Error> {
+        if !self.inode_dirty {
             return Ok(());
-        }
-
-        let mut scope = Scope::empty();
-        let blob_id = match &self.inode.kind {
-            InodeKind::File { blob_id } => *blob_id,
-            _ => panic!("inode is not a file"),
-        };
-
-        if self.data_dirty && blob_id.is_none() {
-            self.inode_dirty = true;
-        }
-        if self.data_dirty {
-            scope |= Scope::BLOBS;
-        }
-        if self.inode_dirty {
-            scope |= Scope::INODES;
         }
 
         let transaction = self
             .web_fs
             .database
-            .transaction(scope, idb::TransactionMode::ReadWrite)?;
-
-        if self.data_dirty {
-            let returned_blob_id = transaction
-                .insert_blob(&InsertBlob {
-                    id: blob_id,
-                    data: self.data.clone().into(),
-                })
-                .await?;
-
-            assert!(blob_id.is_none() || blob_id.unwrap() == returned_blob_id);
-
-            match &mut self.inode.kind {
-                InodeKind::File { blob_id } => {
-                    *blob_id = Some(returned_blob_id);
-                }
-                _ => panic!("inode is not a file"),
-            }
-        }
+            .transaction(Scope::INODES, idb::TransactionMode::ReadWrite)?;
 
         if self.inode_dirty {
             transaction
@@ -371,39 +315,91 @@ impl File {
 
         transaction.commit()?;
         self.inode_dirty = false;
-        self.data_dirty = false;
 
         Ok(())
     }
 
-    pub fn blob(&self) -> Blob {
-        self.data.clone()
+    pub async fn read_blob(&mut self) -> Result<Blob, Error> {
+        let transaction = self
+            .web_fs
+            .database
+            .transaction(Scope::BLOBS, idb::TransactionMode::ReadOnly)?;
+        let mut blob = None;
+
+        match &mut self.inode.kind {
+            InodeKind::File {
+                blob_id: blob_id_option,
+            } => {
+                if let Some(blob_id) = blob_id_option {
+                    if let Some(get_blob) = transaction.get_blob(*blob_id).await? {
+                        blob = Some(get_blob.data.into());
+                    }
+                    else {
+                        tracing::warn!(inode_id = ?self.inode.id, blob_id = ?blob_id, "blob missing for inode");
+                        *blob_id_option = None;
+                        self.inode_dirty = true;
+                    }
+                }
+            }
+            _ => panic!("inode is not a file"),
+        }
+        let blob = blob.unwrap_or_else(|| Blob::new(&b""[..]));
+        Ok(blob)
     }
 
-    pub fn object_url(&self) -> ObjectUrl {
-        self.data.clone().into()
-    }
+    pub async fn read_into(&mut self, buf: &mut BytesMut) -> Result<(), Error> {
+        let blob = self.read_blob().await?;
 
-    pub async fn read_into(&self, buf: &mut Vec<u8>) -> Result<(), Error> {
-        if let Ok(size) = self.data.size().try_into() {
+        if let Ok(size) = blob.size().try_into() {
             buf.reserve(size);
         }
-        let blob: &web_sys::Blob = self.data.as_ref();
-        let mut reader = ReadableStream::from_raw(blob.stream()).into_async_read();
-        reader.read_to_end(buf).await?;
+        let blob: &web_sys::Blob = blob.as_ref();
+        let mut reader = ReadableStream::from_raw(blob.stream())
+            .into_async_read()
+            .compat();
+
+        while tokio_util::io::read_buf(&mut reader, buf).await? > 0 {}
+
         Ok(())
     }
 
-    pub async fn read(&self) -> Result<Vec<u8>, Error> {
-        let mut buf = Vec::with_capacity(self.data.size().try_into().unwrap_or_default());
+    pub async fn read(&mut self) -> Result<Bytes, Error> {
+        let mut buf = BytesMut::new();
         self.read_into(&mut buf).await?;
-        Ok(buf)
+        Ok(buf.freeze())
+    }
+
+    pub async fn write_blob(&mut self, blob: Blob) -> Result<(), Error> {
+        match &mut self.inode.kind {
+            InodeKind::File {
+                blob_id: blob_id_option,
+            } => {
+                let transaction = self
+                    .web_fs
+                    .database
+                    .transaction(Scope::BLOBS, idb::TransactionMode::ReadWrite)?;
+                let returned_blob_id = transaction
+                    .insert_blob(&InsertBlob {
+                        id: *blob_id_option,
+                        data: blob.into(),
+                    })
+                    .await?;
+
+                if blob_id_option.is_none() {
+                    *blob_id_option = Some(returned_blob_id);
+                    self.inode_dirty = true;
+                }
+            }
+            _ => panic!("inode is not a file"),
+        }
+
+        self.flush_inode().await?;
+        Ok(())
     }
 
     pub async fn write(&mut self, data: impl AsRef<[u8]>) -> Result<(), Error> {
-        self.data = Blob::new(data.as_ref());
-        self.data_dirty = true;
-        self.flush().await?;
+        let blob = Blob::new(data.as_ref());
+        self.write_blob(blob).await?;
         Ok(())
     }
 
@@ -426,46 +422,6 @@ impl OpenOptions {
         Self {
             inner: OpenOptionsInner::empty(),
         }
-    }
-
-    pub fn read(&mut self, read: bool) -> &mut Self {
-        if read {
-            self.inner.insert(OpenOptionsInner::READ);
-        }
-        else {
-            self.inner.remove(OpenOptionsInner::READ);
-        }
-        self
-    }
-
-    pub fn write(&mut self, write: bool) -> &mut Self {
-        if write {
-            self.inner.insert(OpenOptionsInner::WRITE);
-        }
-        else {
-            self.inner.remove(OpenOptionsInner::WRITE);
-        }
-        self
-    }
-
-    pub fn append(&mut self, append: bool) -> &mut Self {
-        if append {
-            self.inner.insert(OpenOptionsInner::APPEND);
-        }
-        else {
-            self.inner.remove(OpenOptionsInner::APPEND);
-        }
-        self
-    }
-
-    pub fn truncate(&mut self, truncate: bool) -> &mut Self {
-        if truncate {
-            self.inner.insert(OpenOptionsInner::TRUNCATE);
-        }
-        else {
-            self.inner.remove(OpenOptionsInner::TRUNCATE);
-        }
-        self
     }
 
     pub fn create(&mut self, create: bool) -> &mut Self {
@@ -491,19 +447,13 @@ impl OpenOptions {
 
 impl Default for OpenOptions {
     fn default() -> Self {
-        Self {
-            inner: OpenOptionsInner::READ,
-        }
+        Self::new()
     }
 }
 
 impl Debug for OpenOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenOptions")
-            .field("read", &self.inner.contains(OpenOptionsInner::READ))
-            .field("write", &self.inner.contains(OpenOptionsInner::WRITE))
-            .field("append", &self.inner.contains(OpenOptionsInner::APPEND))
-            .field("truncate", &self.inner.contains(OpenOptionsInner::TRUNCATE))
             .field("create", &self.inner.contains(OpenOptionsInner::CREATE))
             .field(
                 "create_new",
@@ -516,10 +466,6 @@ impl Debug for OpenOptions {
 bitflags! {
     #[derive(Copy, Clone)]
     struct OpenOptionsInner: u8 {
-        const READ       = 0b00000001;
-        const WRITE      = 0b00000010;
-        const APPEND     = 0b00000100;
-        const TRUNCATE   = 0b00001000;
         const CREATE     = 0b00010000;
         const CREATE_NEW = 0b00100000;
     }
@@ -532,7 +478,7 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, serde_json::Error> {
+    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, Error> {
         if let Some(value) = self.meta_data.get(key) {
             let value = T::deserialize(value)?;
             Ok(Some(value))
@@ -542,22 +488,19 @@ impl Metadata {
         }
     }
 
-    pub fn insert<T: Serialize>(
-        &mut self,
-        key: String,
-        value: &T,
-    ) -> Result<(), serde_json::Error> {
+    pub fn insert<T: Serialize>(&mut self, key: impl Into<String>, value: &T) -> Result<(), Error> {
         let value = serde_json::to_value(value)?;
-        self.meta_data.insert(key, value);
+        self.meta_data.insert(key.into(), value);
         Ok(())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("web_fs error")]
+#[error("web fs error")]
 pub enum Error {
     Database(#[from] database::Error),
     Io(#[from] std::io::Error),
+    Json(#[from] serde_json::Error),
     #[error("file not found: {path}")]
     FileNotFound {
         path: PathBuf,
@@ -590,6 +533,7 @@ async fn resolve_inode<'t, 'i, 'p>(
             InodeKind::File { .. } => {
                 return Err(ResolveInodeError::NotADirectory {
                     current_inode,
+                    component,
                     components,
                 });
             }
@@ -609,6 +553,7 @@ async fn resolve_inode<'t, 'i, 'p>(
                     else {
                         return Err(ResolveInodeError::FileNotFound {
                             current_inode,
+                            component,
                             components,
                         });
                     }
@@ -617,9 +562,9 @@ async fn resolve_inode<'t, 'i, 'p>(
                     Cow::Borrowed(root)
                 };
             }
-            Component::Normal(component) => {
+            Component::Normal(file_name) => {
                 current_inode = if let Some(child_inode) = transaction
-                    .get_inode_by_name(component, current_inode.parent)
+                    .get_inode_by_name(file_name, Some(current_inode.id))
                     .await?
                 {
                     Cow::Owned(child_inode)
@@ -627,6 +572,7 @@ async fn resolve_inode<'t, 'i, 'p>(
                 else {
                     return Err(ResolveInodeError::FileNotFound {
                         current_inode,
+                        component,
                         components,
                     });
                 };
@@ -643,10 +589,12 @@ enum ResolveInodeError<'i, 'p> {
     Database(#[from] database::Error),
     NotADirectory {
         current_inode: Cow<'i, GetInode<Metadata>>,
+        component: Component<'p>,
         components: Components<'p>,
     },
     FileNotFound {
         current_inode: Cow<'i, GetInode<Metadata>>,
+        component: Component<'p>,
         components: Components<'p>,
     },
 }

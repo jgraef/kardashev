@@ -90,6 +90,12 @@ impl AsRef<Path> for str {
     }
 }
 
+impl AsRef<Path> for String {
+    fn as_ref(&self) -> &Path {
+        Path::new(self.as_str())
+    }
+}
+
 impl Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.inner, f)
@@ -290,11 +296,11 @@ impl<'a> Components<'a> {
     }
 
     pub fn remaining_path(&self) -> &Path {
-        todo!();
+        Path::new(self.components.remainder())
     }
 
     pub fn consumed_path(&self) -> &Path {
-        todo!();
+        Path::new(self.components.consumed())
     }
 }
 
@@ -398,6 +404,14 @@ impl<'a> Split<'a> {
             pos_back: input.len(),
             done: false,
         }
+    }
+
+    pub fn remainder(&self) -> &str {
+        &self.input[self.pos_front..]
+    }
+
+    pub fn consumed(&self) -> &str {
+        &self.input[..self.pos_front]
     }
 }
 
@@ -631,5 +645,22 @@ mod tests {
                 Component::Normal("bin")
             ]
         );
+    }
+
+    #[test]
+    fn it_returns_the_correct_consumed_and_remaining_portion() {
+        let mut it = Path::new("/usr/bin").components();
+        assert_eq!(it.consumed_path(), Path::new(""));
+        assert_eq!(it.remaining_path(), Path::new("/usr/bin"));
+        assert_eq!(it.next(), Some(Component::RootDir));
+        assert_eq!(it.consumed_path(), Path::new("/"));
+        assert_eq!(it.remaining_path(), Path::new("usr/bin"));
+        assert_eq!(it.next(), Some(Component::Normal("usr")));
+        assert_eq!(it.consumed_path(), Path::new("/usr/"));
+        assert_eq!(it.remaining_path(), Path::new("bin"));
+        assert_eq!(it.next(), Some(Component::Normal("bin")));
+        assert_eq!(it.consumed_path(), Path::new("/usr/bin"));
+        assert_eq!(it.remaining_path(), Path::new(""));
+        assert_eq!(it.next(), None);
     }
 }

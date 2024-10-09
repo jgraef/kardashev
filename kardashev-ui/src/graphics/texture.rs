@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use gloo_file::Blob;
 use image::RgbaImage;
 use kardashev_protocol::assets::{
     self as dist,
@@ -15,17 +16,24 @@ use super::{
     },
     Backend,
 };
-use crate::assets::{
-    image_load::{
+use crate::{
+    assets::{
+        image::{
+            load_image,
+            LoadImageError,
+        },
+        load::{
+            LoadAssetContext,
+            LoadFromAsset,
+        },
+        store::AssetStoreMetaData,
+        AssetNotFound,
+        MaybeHasAssetId,
+    },
+    utils::web_fs::{
         self,
-        AssetClientLoadImageExt,
+        OpenOptions,
     },
-    load::{
-        LoadAssetContext,
-        LoadFromAsset,
-    },
-    AssetNotFound,
-    MaybeHasAssetId,
 };
 
 #[derive(Clone, Debug)]
@@ -61,12 +69,12 @@ impl LoadFromAsset for Texture {
     ) -> Result<Self, Self::Error> {
         tracing::debug!(%asset_id, "loading texture");
 
-        let metadata = context
+        let dist = context
             .dist_assets
             .get::<dist::Texture>(asset_id)
             .ok_or_else(|| AssetNotFound { asset_id })?;
 
-        if metadata.crop.is_some() {
+        if dist.crop.is_some() {
             todo!("refactor texture atlas system");
         }
 
@@ -74,7 +82,47 @@ impl LoadFromAsset for Texture {
             .cache
             .get_or_try_insert_async(asset_id, || {
                 async {
-                    let image = context.client.load_image(&metadata.image).await?;
+                    let mut file = context
+                        .asset_store
+                        .open(&dist.image, &OpenOptions::new().create_new(true))
+                        .await?;
+
+                    let mut data = None;
+
+                    if !file.was_created() {
+                        let meta_data = file
+                            .meta_data()
+                            .get::<AssetStoreMetaData>("asset")?
+                            .unwrap_or_default();
+                        if meta_data.build_time.map_or(false, |t| t >= dist.build_time) {
+                            data = Some(file.read_blob().await?);
+                        }
+                    }
+
+                    let data = if let Some(data) = data {
+                        data
+                    }
+                    else {
+                        let fetched_data = context
+                            .client
+                            .download_file(&dist.image)
+                            .await?
+                            .bytes()
+                            .await?;
+                        file.meta_data_mut().insert(
+                            "asset",
+                            &AssetStoreMetaData {
+                                asset_id: Some(dist.id),
+                                build_time: Some(dist.build_time),
+                            },
+                        )?;
+                        let fetched_data = Blob::new(fetched_data.as_ref());
+                        file.write_blob(fetched_data.clone()).await?;
+                        fetched_data
+                    };
+
+                    //let image = context.client.load_image(&metadata.image).await?;
+                    let image = load_image(data).await?;
                     Ok::<_, LoadTextureError>(Arc::new(TextureData { image }))
                 }
             })
@@ -138,7 +186,9 @@ pub struct TextureData {
 #[error("load texture error")]
 pub enum LoadTextureError {
     AssetNotFound(#[from] AssetNotFound),
-    LoadImage(#[from] image_load::LoadImageError),
+    LoadImage(#[from] LoadImageError),
+    Download(#[from] kardashev_client::DownloadError),
+    WebFs(#[from] web_fs::Error),
 }
 
 #[derive(Clone, Debug)]

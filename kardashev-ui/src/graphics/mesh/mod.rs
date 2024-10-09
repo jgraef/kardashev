@@ -25,14 +25,13 @@ use crate::{
             LoadAssetContext,
             LoadFromAsset,
         },
+        store::AssetStoreMetaData,
         AssetNotFound,
-        FileCacheMetaData,
         MaybeHasAssetId,
     },
-    utils::file_store::{
+    utils::web_fs::{
         self,
-        GetOrInsertError,
-        InsertFile,
+        OpenOptions,
     },
 };
 
@@ -68,32 +67,45 @@ impl LoadFromAsset for Mesh {
             .cache
             .get_or_try_insert_async(asset_id, || {
                 async {
-                    let file = context
-                        .file_store
-                        .get_or_insert(
-                            &dist.mesh,
-                            |meta_data: &FileCacheMetaData| dist.build_time <= meta_data.build_time,
-                            || {
-                                async {
-                                    let data = context
-                                        .client
-                                        .download_file(&dist.mesh)
-                                        .await?
-                                        .bytes()
-                                        .await?;
-                                    Ok::<_, MeshLoadError>(InsertFile {
-                                        meta_data: FileCacheMetaData {
-                                            asset_id,
-                                            build_time: dist.build_time,
-                                        },
-                                        data,
-                                    })
-                                }
-                            },
-                        )
+                    let mut file = context
+                        .asset_store
+                        .open(&dist.mesh, OpenOptions::new().create_new(true))
                         .await?;
 
-                    let mesh_data: MeshData = rmp_serde::from_slice(&file.data)?;
+                    let mut data = None;
+
+                    if !file.was_created() {
+                        let meta_data = file
+                            .meta_data()
+                            .get::<AssetStoreMetaData>("asset")?
+                            .unwrap_or_default();
+                        if meta_data.build_time.map_or(false, |t| t >= dist.build_time) {
+                            data = Some(file.read().await?);
+                        }
+                    }
+
+                    let data = if let Some(data) = data {
+                        data
+                    }
+                    else {
+                        let fetched_data = context
+                            .client
+                            .download_file(&dist.mesh)
+                            .await?
+                            .bytes()
+                            .await?;
+                        file.meta_data_mut().insert(
+                            "asset",
+                            &AssetStoreMetaData {
+                                asset_id: Some(dist.id),
+                                build_time: Some(dist.build_time),
+                            },
+                        )?;
+                        file.write(&fetched_data).await?;
+                        fetched_data
+                    };
+
+                    let mesh_data: MeshData = rmp_serde::from_slice(&data)?;
                     Ok::<_, MeshLoadError>(Arc::new(mesh_data))
                 }
             })
@@ -169,17 +181,8 @@ impl From<MeshData> for Mesh {
 pub enum MeshLoadError {
     AssetNotFound(#[from] AssetNotFound),
     Download(#[from] DownloadError),
-    FileStore(#[from] file_store::Error),
+    WebFs(#[from] web_fs::Error),
     Decode(#[from] rmp_serde::decode::Error),
-}
-
-impl From<GetOrInsertError<MeshLoadError>> for MeshLoadError {
-    fn from(error: GetOrInsertError<MeshLoadError>) -> Self {
-        match error {
-            GetOrInsertError::Insert(mesh_load_error) => mesh_load_error,
-            GetOrInsertError::FileStore(file_store_error) => file_store_error.into(),
-        }
-    }
 }
 
 impl LoadedMesh {

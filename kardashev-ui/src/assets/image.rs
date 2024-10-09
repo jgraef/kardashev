@@ -1,4 +1,9 @@
 use std::{
+    fmt::{
+        Debug,
+        Display,
+    },
+    ops::Deref,
     pin::Pin,
     sync::Arc,
     task::{
@@ -8,6 +13,10 @@ use std::{
 };
 
 use futures::Future;
+use gloo_file::{
+    Blob,
+    ObjectUrl,
+};
 use image::RgbaImage;
 use kardashev_client::AssetClient;
 use parking_lot::Mutex;
@@ -24,10 +33,12 @@ use web_sys::{
     OffscreenCanvasRenderingContext2d,
 };
 
+use crate::utils::thread_local_cell::ThreadLocalCell;
+
 #[derive(Debug, thiserror::Error)]
-#[error("load image error")]
+#[error("load image error: {url}")]
 pub struct LoadImageError {
-    pub url: Url,
+    pub url: ImageUrl,
     pub reason: LoadImageErrorReason,
 }
 
@@ -52,7 +63,76 @@ impl AssetClientLoadImageExt for AssetClient {
     }
 }
 
-fn load_image(url: Url) -> LoadImage {
+#[derive(Clone)]
+pub enum ImageUrl {
+    Url(Url),
+    ObjectUrl(Arc<ThreadLocalCell<ObjectUrl>>),
+}
+
+impl ImageUrl {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Url(url) => url.as_str(),
+            Self::ObjectUrl(url) => url.get().as_ref(),
+        }
+    }
+}
+
+impl From<Url> for ImageUrl {
+    fn from(value: Url) -> Self {
+        Self::Url(value)
+    }
+}
+
+impl From<ObjectUrl> for ImageUrl {
+    fn from(value: ObjectUrl) -> Self {
+        Self::ObjectUrl(Arc::new(ThreadLocalCell::new(value)))
+    }
+}
+
+impl From<Blob> for ImageUrl {
+    fn from(value: Blob) -> Self {
+        ObjectUrl::from(value).into()
+    }
+}
+
+impl From<web_sys::Blob> for ImageUrl {
+    fn from(value: web_sys::Blob) -> Self {
+        Blob::from(value).into()
+    }
+}
+
+impl Display for ImageUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Url(url) => write!(f, "{url}"),
+            Self::ObjectUrl(url) => write!(f, "{}", url.get().deref()),
+        }
+    }
+}
+
+impl Debug for ImageUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct Helper<'a>(&'a str);
+        impl<'a> Debug for Helper<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+
+        match self {
+            Self::Url(url) => f.debug_tuple("Url").field(&Helper(url.as_str())).finish(),
+            Self::ObjectUrl(url) => {
+                f.debug_tuple("ObjectUrl")
+                    .field(&Helper(url.get().deref()))
+                    .finish()
+            }
+        }
+    }
+}
+
+pub fn load_image(url: impl Into<ImageUrl>) -> LoadImage {
+    let url = url.into();
     tracing::debug!(%url, "loading image");
 
     let (tx, rx) = oneshot::channel();
@@ -121,7 +201,7 @@ fn load_image(url: Url) -> LoadImage {
 
 /// Future returned by [`load_image`]. This resolves to the loaded image.
 pub struct LoadImage {
-    url: Url,
+    url: ImageUrl,
     image_element: HtmlImageElement,
     onload_callback: Closure<dyn FnMut(Event)>,
     onerror_callback: Closure<dyn FnMut(Event)>,

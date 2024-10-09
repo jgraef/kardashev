@@ -19,7 +19,7 @@ pub fn path_modified_timestamp(
 
     for result in WalkDir::new(path) {
         let entry = result?;
-        let metadata = path.metadata()?;
+        let metadata = entry.metadata()?;
         if metadata.is_file() {
             let file_modified_time = entry.metadata()?.modified()?.into();
             if let Some(modified_time) = &mut modified_time {

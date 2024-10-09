@@ -18,11 +18,11 @@ use kardashev_protocol::assets::{
 use tokio::sync::oneshot;
 
 use crate::{
-    assets::MaybeHasAssetId,
-    utils::{
-        any_cache::AnyArcCache,
-        file_store::FileStore,
+    assets::{
+        store::AssetStoreGuard,
+        MaybeHasAssetId,
     },
+    utils::any_cache::AnyArcCache,
 };
 
 /// Trait for assets that can be loaded from the asset API.
@@ -104,7 +104,7 @@ pub(super) enum LoadAssetState<A: LoadFromAsset> {
 pub struct LoadAssetContext<'a> {
     pub dist_assets: &'a dist::Assets,
     pub client: &'a AssetClient,
-    pub file_store: &'a FileStore,
+    pub asset_store: &'a AssetStoreGuard,
     pub cache: &'a mut AnyArcCache<AssetId>,
 }
 

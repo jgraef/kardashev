@@ -1,7 +1,8 @@
 mod dyn_type;
-pub mod image_load;
+pub mod image;
 pub mod load;
 mod server;
+pub mod store;
 pub mod system;
 
 use std::fmt::Debug;
@@ -21,11 +22,11 @@ use serde::{
 pub enum Error {
     Reqwest(#[from] reqwest::Error),
     AssetNotFound(#[from] AssetNotFound),
-    ImageLoad(#[from] image_load::LoadImageError),
+    ImageLoad(#[from] image::LoadImageError),
     Graphics(#[from] crate::graphics::Error),
     Client(#[from] kardashev_client::Error),
     AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
-    FileStore(#[from] crate::utils::file_store::Error),
+    WebFs(#[from] crate::utils::web_fs::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

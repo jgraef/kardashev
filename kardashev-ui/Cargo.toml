@@ -46,7 +46,7 @@ gloo-timers = { version = "0.3.0", features = ["futures"] }
 codee = "0.2.0"
 bitflags = "2.6.0"
 rmp-serde = "1.3.0"
-idb = "0.6.3"
+idb = { git = "https://github.com/devashishdxt/idb.git" }
 chrono = { version = "0.4.38", features = ["serde"] }
 serde-wasm-bindgen = "0.6.5"
 serde_bytes = "0.11.15"
@@ -54,6 +54,7 @@ bytes = { version = "1.7.2", features = ["serde"] }
 serde_json = "1.0.128"
 gloo-file = "0.3.0"
 wasm-streams = "0.4.1"
+tokio-util = { version = "0.7.12", features = ["compat", "io"] }
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

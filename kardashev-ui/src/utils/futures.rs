@@ -9,6 +9,7 @@ use std::{
 };
 
 use futures::{
+    pin_mut,
     FutureExt,
     StreamExt,
 };
@@ -19,14 +20,32 @@ use tokio::sync::{
 
 pub fn spawn_local<F: Future<Output = T> + 'static, T: 'static>(fut: F) -> JoinHandle<T> {
     let (tx_result, rx_result) = oneshot::channel();
-    let (tx_cancel, mut rx_cancel) = watch::channel(false);
+    let (tx_cancel, rx_cancel) = watch::channel(false);
 
     wasm_bindgen_futures::spawn_local(async move {
+        pin_mut!(fut);
+        let mut rx_cancel = Some(rx_cancel);
+
+        async fn wait_cancelled(rx_cancel_option: &mut Option<watch::Receiver<bool>>) {
+            if let Some(rx_cancel) = rx_cancel_option {
+                let result = rx_cancel.wait_for(|cancel| *cancel).await;
+                if result.is_err() {
+                    drop(result);
+                    *rx_cancel_option = None;
+                    std::future::pending::<()>().await;
+                }
+            }
+            else {
+                std::future::pending::<()>().await;
+            }
+        }
+
         tokio::select! {
-            _ = rx_cancel.wait_for(|cancel| *cancel) => {
+            _ = wait_cancelled(&mut rx_cancel) => {
+                tracing::debug!("future cancelled");
                 let _ = tx_result.send(Err(JoinError::Cancelled));
             }
-            result = fut => {
+            result = &mut fut => {
                 let _ = tx_result.send(Ok(result));
             }
         }

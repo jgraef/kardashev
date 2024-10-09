@@ -1,6 +1,8 @@
 mod components;
 mod map;
 
+use core::str;
+
 use components::window::provide_graphics;
 use kardashev_client::ApiClient;
 use kardashev_protocol::asset_id;
