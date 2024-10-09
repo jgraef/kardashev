@@ -28,7 +28,7 @@ use crate::{
             ChangeCameraAspectRatio,
             ClearColor,
         },
-        rendering_system::RenderTarget,
+        pipeline::RenderTarget,
         transform::Transform,
         Surface,
     },

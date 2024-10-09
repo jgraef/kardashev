@@ -13,20 +13,18 @@ use std::{
 use kardashev_protocol::assets::AssetId;
 use linear_map::LinearMap;
 
-use super::{
-    rendering_system::{
-        Pipeline,
-        RenderTarget,
-    },
-    Backend,
-    BackendId,
-    Error,
-};
 use crate::{
     assets::MaybeHasAssetId,
     graphics::{
         material::Material,
         mesh::Mesh,
+        pipeline::{
+            Pipeline,
+            RenderTarget,
+        },
+        Backend,
+        BackendId,
+        Error,
     },
     utils::{
         any_cache::AnyArcCache,

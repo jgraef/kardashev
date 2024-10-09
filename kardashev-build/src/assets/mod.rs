@@ -56,6 +56,7 @@ pub enum Error {
     WgslParse(#[from] naga::front::wgsl::ParseError),
     Watch(#[from] crate::util::watch::Error),
     AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
+    NagaValidatation(#[from] naga::WithSpan<naga::valid::ValidationError>),
 }
 
 pub async fn process(

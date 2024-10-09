@@ -11,7 +11,6 @@ use leptos::{
     provide_context,
     store_value,
     view,
-    watch,
     IntoView,
     Signal,
     SignalGet,
@@ -19,7 +18,6 @@ use leptos::{
 };
 use leptos_use::{
     signal_debounced,
-    storage::use_local_storage,
     use_document_visibility,
     use_element_size_with_options,
     use_element_visibility,
@@ -31,9 +29,9 @@ use web_sys::{
 };
 
 use crate::{
+    app::config::Config,
     error::Error,
     graphics::{
-        self,
         Graphics,
         Surface,
         SurfaceSize,
@@ -48,21 +46,9 @@ struct Style;
 
 pub fn provide_graphics() {
     tracing::debug!("creating renderer");
-
-    let (config, _set_config, _delete_config) =
-        use_local_storage::<graphics::Config, codee::string::JsonSerdeCodec>("graphics-config");
-
-    let _ = watch(
-        move || config.get(),
-        move |new_config, old_config, _| {
-            if old_config.map_or(false, |old_config| new_config != old_config) {
-                tracing::warn!("config changed. will only take effect after reloading the page.");
-            }
-        },
-        false,
-    );
-
-    let config = config.get_untracked();
+    let Config {
+        graphics: config, ..
+    } = expect_context::<Config>();
 
     let graphics = Graphics::new(config);
     provide_context(graphics);

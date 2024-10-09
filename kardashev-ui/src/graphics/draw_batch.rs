@@ -40,12 +40,7 @@ impl DrawBatcher {
         }
     }
 
-    pub fn draw(
-        &mut self,
-        backend: &Backend,
-        camera_bind_group: &wgpu::BindGroup,
-        render_pass: &mut wgpu::RenderPass,
-    ) {
+    pub fn draw(&mut self, backend: &Backend, render_pass: &mut wgpu::RenderPass) {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
             let start_index = self.instances.len() as u32;
@@ -93,7 +88,6 @@ impl DrawBatcher {
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.set_bind_group(0, &material.bind_group, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
             render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
         }
     }

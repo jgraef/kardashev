@@ -43,7 +43,14 @@ impl Asset for Shader {
         }
 
         let source = std::fs::read_to_string(&path)?;
-        let module = naga::front::wgsl::parse_str(&source)?;
+        let module = match naga::front::wgsl::parse_str(&source) {
+            Ok(module) => module,
+            Err(error) => {
+                error.emit_to_stderr_with_path(&source, path);
+                return Err(error.into());
+            }
+        };
+
         let mut validator = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
@@ -73,6 +80,7 @@ impl Asset for Shader {
             }
             Err(error) => {
                 error.emit_to_stderr_with_path(&source, &path.to_string_lossy());
+                return Err(error.into());
             }
         }
 

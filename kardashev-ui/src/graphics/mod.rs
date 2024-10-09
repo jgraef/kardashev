@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod rendering_system;
 pub mod texture;
 pub mod transform;
+pub mod util;
 
 use std::{
     fmt::Debug,
