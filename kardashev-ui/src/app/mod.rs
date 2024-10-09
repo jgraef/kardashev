@@ -143,7 +143,7 @@ fn provide_world(asset_url: Url) {
                             model_matrix: Similarity3::identity(),
                         },
                         Mesh::from(shape::Sphere::default().mesh().build()),
-                        Load::<Material>::new(asset_id!("796e953f-3985-4cc2-994b-ff74aaba2fe9")),
+                        Load::<Material>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
                     ));
 
                     Ok(())

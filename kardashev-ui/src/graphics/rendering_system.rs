@@ -75,7 +75,7 @@ impl System for RenderingSystem {
                 continue;
             }
 
-            tracing::debug!(?label, "rendering camera");
+            tracing::trace!(?label, "rendering camera");
 
             let target_texture = render_target
                 .surface

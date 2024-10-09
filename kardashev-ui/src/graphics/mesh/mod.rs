@@ -69,7 +69,7 @@ impl LoadFromAsset for Mesh {
                 async {
                     let mut file = context
                         .asset_store
-                        .open(&dist.mesh, OpenOptions::new().create_new(true))
+                        .open(&dist.mesh, OpenOptions::new().create(true))
                         .await?;
 
                     let mut data = None;

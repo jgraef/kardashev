@@ -1,4 +1,5 @@
 mod cargo;
+mod git;
 mod wasm_bindgen;
 
 use std::{
@@ -12,10 +13,19 @@ use std::{
 };
 
 use askama::Template;
+use chrono::{
+    DateTime,
+    Utc,
+};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     ui::{
         cargo::Cargo,
+        git::Git,
         wasm_bindgen::wasm_bindgen,
     },
     util::path_modified_timestamp,
@@ -27,12 +37,14 @@ pub enum Error {
     Io(#[from] std::io::Error),
     Cargo(#[from] crate::ui::cargo::Error),
     WasmBindgen(#[from] crate::ui::wasm_bindgen::WasmBindgenError),
+    Json(#[from] serde_json::Error),
 }
 
 #[tracing::instrument(skip_all)]
 pub async fn compile_ui(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
+    clean: bool,
 ) -> Result<(), Error> {
     let input_path = input_path.as_ref();
     let output_path = output_path.as_ref();
@@ -46,6 +58,19 @@ pub async fn compile_ui(
         // todo: don't panic
         panic!("Unexpected number of targets: {}", manifest.targets.len());
     }
+
+    let build_time = Utc::now();
+    let build_info_path = output_path.join("build_info.json");
+    let build_info = if build_info_path.exists() && !clean {
+        let reader = BufReader::new(File::open(&build_info_path)?);
+        let build_info: BuildInfo = serde_json::from_reader(reader)?;
+        Some(build_info)
+    }
+    else {
+        None
+    };
+
+    let commit = Git.head().await.ok();
 
     let target_name = &manifest.targets[0].name;
     tracing::debug!(%target_name);
@@ -77,9 +102,11 @@ pub async fn compile_ui(
     else {
         // check freshness
         let input_modified_time = path_modified_timestamp(input_path, std::cmp::max)?;
-        let output_modified_time = path_modified_timestamp(output_path, std::cmp::min)?;
-        tracing::debug!(?input_modified_time, ?output_modified_time);
-        let fresh = match (input_modified_time, output_modified_time) {
+        let previous_build_time = build_info.as_ref().map(|build_info| build_info.build_time);
+
+        tracing::debug!(?input_modified_time, ?previous_build_time);
+
+        let is_fresh = match (input_modified_time, previous_build_time) {
             (None, _) => true,
             (Some(input_modified_time), Some(output_modified_time))
                 if input_modified_time <= output_modified_time =>
@@ -88,7 +115,8 @@ pub async fn compile_ui(
             }
             _ => false,
         };
-        if fresh {
+
+        if is_fresh {
             tracing::debug!("not modified since last build. skipping.");
             return Ok(());
         }
@@ -124,6 +152,15 @@ pub async fn compile_ui(
     }
     .write_into(&mut writer)?;
 
+    let build_info = BuildInfo {
+        build_time,
+        version: manifest.version,
+        commit,
+    };
+
+    let writer = BufWriter::new(File::create(&build_info_path)?);
+    serde_json::to_writer_pretty(writer, &build_info)?;
+
     tracing::info!("done");
 
     Ok(())
@@ -135,4 +172,11 @@ struct IndexHtml<'a> {
     js: &'a str,
     wasm: &'a str,
     css: &'a str,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BuildInfo {
+    build_time: DateTime<Utc>,
+    version: String,
+    commit: Option<String>,
 }

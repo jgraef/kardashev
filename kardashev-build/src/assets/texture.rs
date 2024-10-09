@@ -4,10 +4,7 @@ use std::{
     io::BufWriter,
 };
 
-use image::{
-    ImageFormat,
-    ImageReader,
-};
+use image::ImageReader;
 use kardashev_protocol::assets::AssetId;
 
 use crate::assets::{
@@ -17,6 +14,7 @@ use crate::assets::{
         Manifest,
         ScaleTo,
         Texture,
+        TextureFileFormat,
     },
     Asset,
     Error,
@@ -81,7 +79,10 @@ impl Asset for Texture {
                         *height,
                     ]
                 }
-                _ => panic!("Either width, height, or both must be specified for scaling"),
+                _ => {
+                    // todo: return an error
+                    panic!("Either width, height, or both must be specified for scaling")
+                }
             };
             let filter = scale_to.filter.unwrap_or_default().into();
             image = tokio::task::spawn_blocking(move || {
@@ -107,14 +108,27 @@ impl Asset for Texture {
                 h: image.height(),
             };
 
-            let filename = format!("{id}.png");
+            let output_format = self.output_format.unwrap_or_default();
+            let filename = format!("{id}.{}", output_format.file_extension());
             let path = context.dist_path.join(&filename);
-            tokio::task::spawn_blocking(move || {
-                let mut writer = BufWriter::new(File::create(&path)?);
-                image.write_to(&mut writer, ImageFormat::Png)
-            })
-            .await
-            .unwrap()?;
+
+            match output_format {
+                TextureFileFormat::Jpeg
+                | TextureFileFormat::Png
+                | TextureFileFormat::Gif
+                | TextureFileFormat::Webp
+                | TextureFileFormat::Tiff => {
+                    tokio::task::spawn_blocking(move || {
+                        let mut writer = BufWriter::new(File::create(&path)?);
+                        image.write_to(&mut writer, output_format.image_format().unwrap())
+                    })
+                    .await
+                    .unwrap()?;
+                }
+                TextureFileFormat::Ktx2 => {
+                    todo!();
+                }
+            }
 
             context.dist_assets.insert(dist::Texture {
                 id,

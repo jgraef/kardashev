@@ -108,7 +108,7 @@ impl BuildOptions {
 
         if self.ui {
             let dist_ui = self.dist_path.join("ui");
-            compile_ui(&self.ui_path, &dist_ui).await?;
+            compile_ui(&self.ui_path, &dist_ui, self.clean).await?;
 
             if self.watch {
                 let ui_path = self.ui_path.clone();
@@ -122,7 +122,7 @@ impl BuildOptions {
                             _ = token.cancelled() => break,
                             changes_option = watch_files.next(debounce) => {
                                 let Some(_changes) = changes_option else { break; };
-                                if let Err(error) = compile_ui(&ui_path, &dist_ui).await {
+                                if let Err(error) = compile_ui(&ui_path, &dist_ui, false).await {
                                     tracing::error!(%error);
                                 }
                             }

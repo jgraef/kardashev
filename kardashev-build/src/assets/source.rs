@@ -46,18 +46,46 @@ pub struct Texture {
     pub label: Option<String>,
     pub path: PathBuf,
     pub atlas: Option<AtlasDef>,
-    pub convert_to: Option<ImageFormat>,
+    pub output_format: Option<TextureFileFormat>,
     pub scale_to: Option<ScaleTo>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ImageFormat {
-    Jpg,
+pub enum TextureFileFormat {
+    #[serde(alias = "jpg")]
+    Jpeg,
+    #[default]
     Png,
     Gif,
     Webp,
-    Tif,
+    #[serde(alias = "tif")]
+    Tiff,
+    Ktx2,
+}
+
+impl TextureFileFormat {
+    pub fn file_extension(&self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+            Self::Gif => "gif",
+            Self::Webp => "webp",
+            Self::Tiff => "tif",
+            Self::Ktx2 => "ktx",
+        }
+    }
+
+    pub fn image_format(&self) -> Option<image::ImageFormat> {
+        match self {
+            Self::Jpeg => Some(image::ImageFormat::Jpeg),
+            Self::Png => Some(image::ImageFormat::Png),
+            Self::Gif => Some(image::ImageFormat::Gif),
+            Self::Webp => Some(image::ImageFormat::WebP),
+            Self::Tiff => Some(image::ImageFormat::Tiff),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

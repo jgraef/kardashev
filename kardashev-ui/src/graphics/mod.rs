@@ -27,6 +27,10 @@ use std::{
 };
 
 use loading::GpuLoadingSystem;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use tokio::sync::{
     mpsc,
     oneshot,
@@ -63,10 +67,18 @@ pub enum Error {
     RequestDevice(#[from] wgpu::RequestDeviceError),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     pub power_preference: wgpu::PowerPreference,
-    pub backend_type: BackendType,
+    pub backend_type: SelectBackendType,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SelectBackendType {
+    #[default]
+    AutoDetect,
+    Select(BackendType),
 }
 
 #[derive(Clone, Debug)]
@@ -76,6 +88,8 @@ pub struct Graphics {
 
 impl Graphics {
     pub fn new(config: Config) -> Self {
+        tracing::debug!(?config, "initializing graphics");
+
         let (tx_command, rx_command) = mpsc::channel(16);
 
         spawn_local_and_handle_error(async move {
@@ -126,11 +140,25 @@ impl Graphics {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BackendType {
     WebGpu,
     #[default]
     WebGl,
+}
+
+impl BackendType {
+    fn uses_shared_backend(&self) -> bool {
+        matches!(self, Self::WebGpu)
+    }
+
+    fn as_wgpu(&self) -> wgpu::Backends {
+        match self {
+            BackendType::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
+            BackendType::WebGl => wgpu::Backends::GL,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -146,15 +174,6 @@ pub struct Backend {
 }
 
 impl Backend {
-    async fn webgpu_shared(config: &Config) -> Result<Self, Error> {
-        tracing::debug!("creating WEBGPU instance");
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
-        });
-        Self::new(Arc::new(instance), config, None).await
-    }
-
     async fn new(
         instance: Arc<wgpu::Instance>,
         config: &Config,
@@ -187,6 +206,8 @@ impl Backend {
             panic!("uncaptured wgpu error: {error}");
         }));
 
+        tracing::debug!("device features: {:#?}", device.features());
+
         static IDS: AtomicUsize = AtomicUsize::new(1);
         let id = BackendId(NonZeroUsize::new(IDS.fetch_add(1, Ordering::Relaxed)).unwrap());
 
@@ -207,21 +228,45 @@ impl Backend {
 #[derive(Debug)]
 struct Reactor {
     config: Config,
-    rx_command: mpsc::Receiver<Command>,
+    backend_type: BackendType,
     shared_backend: Option<Backend>,
+    rx_command: mpsc::Receiver<Command>,
 }
 
 impl Reactor {
     async fn new(config: Config, rx_command: mpsc::Receiver<Command>) -> Result<Self, Error> {
-        let shared_backend = match config.backend_type {
-            BackendType::WebGpu => Some(Backend::webgpu_shared(&config).await?),
-            _ => None,
+        let (backend_type, shared_backend) = match config.backend_type {
+            SelectBackendType::AutoDetect => {
+                tracing::debug!("trying WEBGPU");
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::BROWSER_WEBGPU,
+                    ..Default::default()
+                });
+
+                if let Ok(shared_backend) = Backend::new(Arc::new(instance), &config, None).await {
+                    (BackendType::WebGpu, Some(shared_backend))
+                }
+                else {
+                    tracing::info!("failed to initialize WEBGPU backend, falling back to WebGL");
+                    (BackendType::WebGl, None)
+                }
+            }
+            SelectBackendType::Select(backend_type) => {
+                tracing::debug!(?backend_type, "initializing shared backend");
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: backend_type.as_wgpu(),
+                    ..Default::default()
+                });
+                let shared_backend = Backend::new(Arc::new(instance), &config, None).await?;
+                (backend_type, Some(shared_backend))
+            }
         };
 
         Ok(Self {
             config,
-            rx_command,
+            backend_type,
             shared_backend,
+            rx_command,
         })
     }
 
@@ -255,18 +300,21 @@ impl Reactor {
     ) -> Result<CreateSurfaceResponse, Error> {
         tracing::info!(?window_handle, ?surface_size, "creating surface");
 
-        let (surface, backend) = if let Some(backend) = &self.shared_backend {
+        let (surface, backend) = if self.backend_type.uses_shared_backend() {
+            let backend = self
+                .shared_backend
+                .as_ref()
+                .expect("expected a shared backend for WebGPU backend");
             let surface = backend
                 .instance
                 .create_surface(window_handle)
                 .expect("failed to create surface");
-
             (surface, backend.clone())
         }
         else {
             tracing::debug!("creating WebGL instance");
             let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::GL,
+                backends: self.backend_type.as_wgpu(),
                 ..Default::default()
             }));
 

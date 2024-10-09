@@ -1,5 +1,10 @@
 use hecs::Entity;
-use nalgebra::Similarity3;
+use nalgebra::{
+    Point3,
+    Similarity3,
+    Unit,
+    Vector3,
+};
 
 use crate::{
     error::Error,
@@ -13,6 +18,16 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct Transform {
     pub model_matrix: Similarity3<f32>,
+}
+
+impl Transform {
+    pub fn look_at(eye: Point3<f32>, look_at: Point3<f32>) -> Self {
+        let unit = Unit::face_towards(&(&eye - &look_at), &Vector3::z());
+        let (axis, angle) = unit.axis_angle().unwrap();
+        Transform {
+            model_matrix: Similarity3::new(eye.coords, *axis * angle, 1.0),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -84,7 +84,7 @@ impl LoadFromAsset for Texture {
                 async {
                     let mut file = context
                         .asset_store
-                        .open(&dist.image, &OpenOptions::new().create_new(true))
+                        .open(&dist.image, &OpenOptions::new().create(true))
                         .await?;
 
                     let mut data = None;

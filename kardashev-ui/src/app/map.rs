@@ -10,9 +10,8 @@ use leptos::{
     StoredValue,
 };
 use nalgebra::{
-    Similarity3,
+    Point3,
     Translation3,
-    Vector3,
 };
 use palette::WithAlpha;
 use tokio::sync::watch;
@@ -124,12 +123,10 @@ impl OneshotSystem for SpawnMapCamera {
 
     async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
         let entity = context.world.spawn((
-            Transform {
-                model_matrix: Similarity3::new(Vector3::new(0., 1., 5.), Vector3::y() * 0., 1.0),
-            },
+            Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
             Camera::new(1., 45., 0.1, 100.),
             ClearColor {
-                clear_color: palette::named::DARKSLATEGRAY.into_format().with_alpha(1.0),
+                clear_color: palette::named::BLACK.into_format().with_alpha(1.0),
             },
             Label {
                 label: "map".into(),
