@@ -9,25 +9,20 @@ use leptos::{
     IntoView,
     StoredValue,
 };
-use nalgebra::{
-    Point3,
-    Translation3,
-};
-use palette::WithAlpha;
+use nalgebra::Translation3;
 use tokio::sync::watch;
 
 use crate::{
-    app::components::window::{
-        Window,
-        WindowEvent,
+    app::{
+        components::window::{
+            Window,
+            WindowEvent,
+        },
+        MainCamera,
     },
     error::Error,
     graphics::{
-        camera::{
-            Camera,
-            ChangeCameraAspectRatio,
-            ClearColor,
-        },
+        camera::ChangeCameraAspectRatio,
         pipeline::RenderTarget,
         transform::Transform,
         Surface,
@@ -38,7 +33,6 @@ use crate::{
         InputState,
     },
     world::{
-        Label,
         OneshotSystem,
         Plugin,
         RegisterPluginContext,
@@ -54,7 +48,7 @@ struct Style;
 #[component]
 pub fn Map() -> impl IntoView {
     let camera_entity = store_value(None);
-    let (tx_input_state, rx_input_state) = watch::channel(InputState::default());
+    let (tx_input_state, _rx_input_state) = watch::channel(InputState::default());
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
@@ -62,10 +56,9 @@ pub fn Map() -> impl IntoView {
         let world = expect_context::<World>();
         let render_target = RenderTarget::from_surface(surface);
 
-        world.run_oneshot_system(SpawnMapCamera {
+        world.run_oneshot_system(AttachRenderTarget {
             render_target,
             camera_entity,
-            input_state: rx_input_state,
         })
     };
 
@@ -78,16 +71,14 @@ pub fn Map() -> impl IntoView {
                     .send_modify(|input_state| input_state.push(&InputEvent::Mouse(mouse_event)));
             }
             WindowEvent::Resize { surface_size } => {
-                camera_entity.with_value(move |camera_entity| {
-                    if let Some(camera_entity) = *camera_entity {
-                        let world = expect_context::<World>();
-                        let aspect = (surface_size.width as f32) / (surface_size.height as f32);
-                        world.run_oneshot_system(ChangeCameraAspectRatio {
-                            camera_entity,
-                            aspect,
-                        });
-                    }
-                });
+                if let Some(camera_entity) = camera_entity.get_value() {
+                    let world = expect_context::<World>();
+                    let aspect = (surface_size.width as f32) / (surface_size.height as f32);
+                    world.run_oneshot_system(ChangeCameraAspectRatio {
+                        camera_entity,
+                        aspect,
+                    });
+                }
             }
             WindowEvent::Visibility { .. } => {}
         }
@@ -95,12 +86,11 @@ pub fn Map() -> impl IntoView {
 
     on_cleanup(move || {
         camera_entity.update_value(|camera_entity| {
-            if let Some(camera_entity) = camera_entity.take() {
-                tracing::debug!(?camera_entity, "despawning camera");
-
+            if let Some(camera_entity) = *camera_entity {
                 let world = expect_context::<World>();
-                world.despawn(camera_entity);
+                world.run_oneshot_system(DetachRenderTarget { camera_entity });
             }
+            *camera_entity = None;
         });
     });
 
@@ -110,32 +100,37 @@ pub fn Map() -> impl IntoView {
 }
 
 #[derive(Debug)]
-struct SpawnMapCamera {
+struct AttachRenderTarget {
     render_target: RenderTarget,
     camera_entity: StoredValue<Option<Entity>>,
-    input_state: watch::Receiver<InputState>,
 }
 
-impl OneshotSystem for SpawnMapCamera {
+impl OneshotSystem for AttachRenderTarget {
     fn label(&self) -> &'static str {
-        "spawn-map-camera"
+        "attach-render-target"
     }
 
     async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
-        let entity = context.world.spawn((
-            Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
-            Camera::new(1., 45., 0.1, 100.),
-            ClearColor {
-                clear_color: palette::named::BLACK.into_format().with_alpha(1.0),
-            },
-            Label {
-                label: "map".into(),
-            },
-            self.render_target,
-        ));
+        if let Some(MainCamera { camera_entity }) = context.resources.get::<MainCamera>() {
+            let _ = context.world.insert_one(*camera_entity, self.render_target);
+            self.camera_entity.set_value(Some(*camera_entity));
+        }
 
-        self.camera_entity.set_value(Some(entity));
+        Ok(())
+    }
+}
 
+struct DetachRenderTarget {
+    camera_entity: Entity,
+}
+
+impl OneshotSystem for DetachRenderTarget {
+    fn label(&self) -> &'static str {
+        "detach-render-target"
+    }
+
+    async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
+        let _ = context.world.remove_one::<RenderTarget>(self.camera_entity);
         Ok(())
     }
 }

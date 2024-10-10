@@ -1,10 +1,12 @@
 struct CameraUniform {
     view_projection: mat4x4<f32>,
+    view_position: vec3<f32>,
 };
 
 struct LightUniform {
     ambient_color: vec4<f32>,
     diffuse_color: vec4<f32>,
+    specular_color: vec4<f32>,
     position: vec3<f32>,
 };
 
@@ -98,17 +100,27 @@ var material_dissolve_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let diffuse_texture_color = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords);
-
-    let ambient_color = light.ambient_color.xyz * light.ambient_color.w;
+    // todo: use the other material textures, if applicable
 
     let light_direction = normalize(light.position - in.world_position);
+    let view_direction = normalize(camera.view_position - in.world_position);
+    let reflect_direction = reflect(-light_direction, in.world_normal);
+
+    // ambient color
+    let ambient_color = light.ambient_color.xyz * light.ambient_color.w;
+
+    // diffuse color
+    let diffuse_texture_color = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords);
     let diffuse_strength = max(dot(in.world_normal, light_direction), 0.0);
     let diffuse_color = light.diffuse_color.xyz * light.diffuse_color.w * diffuse_strength;
 
-    let color_rgb = (ambient_color + diffuse_color) * diffuse_texture_color.xyz;
+    //let specular_strength = pow(max(dot(view_direction, reflect_direction), 0.0), 32.0);
+    //let specular_color = light.specular_color.xyz * light.specular_color.w * specular_strength; // original
+    let specular_color = vec3<f32>(0.0, 0.0, 0.0);
+
+    let color_rgb = (ambient_color + diffuse_color + specular_color) * diffuse_texture_color.xyz;
+    //let color_rgb = specular_color;
     let color_rgba = vec4<f32>(color_rgb, diffuse_texture_color.w);
-    //let color = diffuse_texture_color;
 
     return color_rgba;
 }

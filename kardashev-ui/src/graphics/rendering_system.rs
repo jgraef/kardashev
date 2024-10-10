@@ -91,9 +91,7 @@ impl System for RenderingSystem {
                     ops: wgpu::Operations {
                         load: clear_color
                             .map(|c| {
-                                wgpu::LoadOp::Clear(color_to_wgpu(
-                                    c.clear_color.into_format(),
-                                ))
+                                wgpu::LoadOp::Clear(color_to_wgpu(c.clear_color.into_format()))
                             })
                             .unwrap_or(wgpu::LoadOp::Load),
                         store: wgpu::StoreOp::Store,

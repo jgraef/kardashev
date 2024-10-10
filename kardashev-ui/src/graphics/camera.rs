@@ -53,6 +53,12 @@ pub struct ClearColor {
     pub clear_color: Srgba<f32>,
 }
 
+impl ClearColor {
+    pub fn new(clear_color: Srgba<f32>) -> Self {
+        Self { clear_color }
+    }
+}
+
 impl Default for ClearColor {
     fn default() -> Self {
         Self {

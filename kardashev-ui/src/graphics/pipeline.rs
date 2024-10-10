@@ -22,7 +22,10 @@ use crate::{
         },
         texture::LoadedTexture,
         transform::GlobalTransform,
-        util::{color_to_array, wgpu_buffer_size},
+        util::{
+            color_to_array,
+            wgpu_buffer_size,
+        },
         Backend,
         Surface,
         SurfaceSize,
@@ -102,7 +105,7 @@ impl Pipeline {
                 label: Some("camera_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -128,8 +131,10 @@ impl Pipeline {
             });
 
         let white = palette::named::WHITE.into_format();
-        let light_uniform =
-            LightUniform::new(Point3::new(-5., 0., 0.), white.with_alpha(0.1), white.with_alpha(1.0));
+        let light_uniform = LightUniform::new(Point3::new(0., -2., 5.))
+            .with_ambient_color(white.with_alpha(0.1))
+            .with_diffuse_color(white.with_alpha(1.0))
+            .with_specular_color(white.with_alpha(1.0));
 
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("light buffer"),
@@ -351,6 +356,8 @@ impl DepthTexture {
 #[repr(C)]
 pub struct CameraUniform {
     pub view_projection: [f32; 16],
+    pub view_position: [f32; 3],
+    padding: u32,
 }
 
 impl CameraUniform {
@@ -361,6 +368,15 @@ impl CameraUniform {
             .as_slice()
             .try_into()
             .unwrap(),
+            view_position: transform
+                .model_matrix
+                .isometry
+                .translation
+                .vector
+                .as_slice()
+                .try_into()
+                .unwrap(),
+            padding: 0,
         }
     }
 }
@@ -370,17 +386,34 @@ impl CameraUniform {
 pub struct LightUniform {
     pub ambient_color: [f32; 4],
     pub diffuse_color: [f32; 4],
+    pub specular_color: [f32; 4],
     pub position: [f32; 3],
     _padding: u32,
 }
 
 impl LightUniform {
-    pub fn new(position: Point3<f32>, ambient_color: Srgba<f32>, diffuse_color: Srgba<f32>) -> Self {
+    pub fn new(position: Point3<f32>) -> Self {
         Self {
-            ambient_color: color_to_array(ambient_color),
-            diffuse_color: color_to_array(diffuse_color),
+            ambient_color: Default::default(),
+            diffuse_color: Default::default(),
+            specular_color: Default::default(),
             position: position.coords.as_slice().try_into().unwrap(),
             _padding: 0,
         }
+    }
+
+    pub fn with_ambient_color(mut self, ambient_color: Srgba<f32>) -> Self {
+        self.ambient_color = color_to_array(ambient_color);
+        self
+    }
+
+    pub fn with_diffuse_color(mut self, diffuse_color: Srgba<f32>) -> Self {
+        self.diffuse_color = color_to_array(diffuse_color);
+        self
+    }
+
+    pub fn with_specular_color(mut self, specular_color: Srgba<f32>) -> Self {
+        self.specular_color = color_to_array(specular_color);
+        self
     }
 }

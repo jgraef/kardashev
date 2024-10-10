@@ -19,8 +19,5 @@ pub fn color_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
 }
 
 pub fn color_to_array<T: Copy>(color: Srgba<T>) -> [T; 4] {
-    [color.red,
-    color.green,
-    color.blue,
-    color.alpha]
+    [color.red, color.green, color.blue, color.alpha]
 }

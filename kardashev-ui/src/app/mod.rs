@@ -5,6 +5,7 @@ mod map;
 use core::str;
 
 use components::window::provide_graphics;
+use hecs::Entity;
 use kardashev_client::ApiClient;
 use kardashev_protocol::asset_id;
 use kardashev_style::style;
@@ -22,7 +23,11 @@ use leptos_router::{
     Router,
     Routes,
 };
-use nalgebra::Similarity3;
+use nalgebra::{
+    Point3,
+    Similarity3,
+};
+use palette::WithAlpha;
 
 use self::map::Map;
 use crate::{
@@ -40,6 +45,10 @@ use crate::{
     },
     error::Error,
     graphics::{
+        camera::{
+            Camera,
+            ClearColor,
+        },
         material::Material,
         mesh::{
             shape,
@@ -52,6 +61,7 @@ use crate::{
     },
     input::InputPlugin,
     world::{
+        Label,
         OneshotSystem,
         RunSystemContext,
         World,
@@ -126,13 +136,23 @@ fn provide_world() {
                     // system when the request finishes
                     //let stars = api_client.get_stars().await?;
 
-                    context.world.spawn((
+                    let _star_entity = context.world.spawn((
                         Transform {
                             model_matrix: Similarity3::identity(),
                         },
                         Mesh::from(shape::Sphere::default().mesh().build()),
                         Load::<Material>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
+                        Label::new_static("star"),
                     ));
+
+                    let camera_entity = context.world.spawn((
+                        Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
+                        Camera::new(1., 45., 0.1, 100.),
+                        ClearColor::new(palette::named::BLACK.into_format().with_alpha(1.0)),
+                        Label::new_static("camera"),
+                    ));
+
+                    context.resources.insert(MainCamera { camera_entity });
 
                     Ok(())
                 }
@@ -143,4 +163,9 @@ fn provide_world() {
         .build();
 
     provide_context(world);
+}
+
+#[derive(Clone, Debug)]
+pub struct MainCamera {
+    pub camera_entity: Entity,
 }

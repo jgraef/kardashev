@@ -31,3 +31,17 @@ pub use self::{
 pub struct Label {
     pub label: Cow<'static, str>,
 }
+
+impl Label {
+    pub fn new(label: impl ToString) -> Self {
+        Self {
+            label: label.to_string().into(),
+        }
+    }
+
+    pub fn new_static(label: &'static str) -> Self {
+        Self {
+            label: label.into(),
+        }
+    }
+}
