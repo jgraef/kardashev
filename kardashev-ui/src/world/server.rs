@@ -1,34 +1,36 @@
+use std::task::{
+    ready,
+    Poll,
+};
+
 use hecs::Entity;
 use tokio::sync::{
     mpsc,
     oneshot,
 };
 
-use super::{
-    resource::{
-        Resources,
-        Tick,
-    },
-    schedule::Scheduler,
-    system::{
-        DynOneshotSystem,
-        OneshotSystem,
-        System,
-    },
-    Plugin,
-    RegisterPluginContext,
-};
 use crate::{
-    error::Error,
     utils::futures::spawn_local_and_handle_error,
-    world::system::RunSystemContext,
+    world::{
+        resource::Resources,
+        schedule::Schedule,
+        system::{
+            DynSystem,
+            System,
+            SystemContext,
+        },
+        Error,
+        Plugin,
+        RegisterPluginContext,
+    },
 };
 
 #[derive(Default)]
 pub struct Builder {
     world: hecs::World,
     resources: Resources,
-    scheduler: Scheduler,
+    startup_schedule: Schedule,
+    schedule: Schedule,
 }
 
 impl Builder {
@@ -41,30 +43,21 @@ impl Builder {
         self
     }
 
-    pub fn add_startup_system(&mut self, system: impl OneshotSystem) {
-        self.scheduler.add_startup_system(system);
+    pub fn add_startup_system(&mut self, system: impl System) {
+        self.startup_schedule.add_system(system);
     }
 
-    pub fn with_startup_system(mut self, system: impl OneshotSystem) -> Self {
-        self.scheduler.add_startup_system(system);
+    pub fn with_startup_system(mut self, system: impl System) -> Self {
+        self.startup_schedule.add_system(system);
         self
     }
 
-    pub fn add_update_system(&mut self, system: impl System) {
-        self.scheduler.add_update_system(system);
+    pub fn add_system(&mut self, system: impl System) {
+        self.schedule.add_system(system);
     }
 
-    pub fn with_update_system(mut self, system: impl System) -> Self {
-        self.scheduler.add_update_system(system);
-        self
-    }
-
-    pub fn add_render_system(&mut self, system: impl System) {
-        self.scheduler.add_render_system(system);
-    }
-
-    pub fn with_render_system(mut self, system: impl System) -> Self {
-        self.scheduler.add_render_system(system);
+    pub fn with_system(mut self, system: impl System) -> Self {
+        self.schedule.add_system(system);
         self
     }
 
@@ -72,7 +65,8 @@ impl Builder {
         plugin.register(RegisterPluginContext {
             world: &mut self.world,
             resources: &mut self.resources,
-            scheduler: &mut self.scheduler,
+            startup_schedule: &mut self.startup_schedule,
+            schedule: &mut self.schedule,
         });
     }
 
@@ -85,7 +79,13 @@ impl Builder {
         let (tx_command, rx_command) = mpsc::unbounded_channel();
 
         spawn_local_and_handle_error(async move {
-            let server = WorldServer::new(rx_command, self);
+            let server = WorldServer {
+                rx_command,
+                world: self.world,
+                resources: self.resources,
+                startup_schedule: self.startup_schedule,
+                schedule: self.schedule,
+            };
             server.run().await
         });
 
@@ -123,9 +123,9 @@ impl World {
         self.send_command(Command::DespawnEntity { entity });
     }
 
-    pub fn run_oneshot_system(&self, system: impl OneshotSystem) {
-        self.send_command(Command::RunOneshotSystem {
-            system: Box::new(system),
+    pub fn add_system(&self, system: impl System) {
+        self.send_command(Command::AddSystem {
+            system: system.dyn_system(),
         });
     }
 }
@@ -141,8 +141,8 @@ enum Command {
     DespawnEntity {
         entity: Entity,
     },
-    RunOneshotSystem {
-        system: Box<dyn DynOneshotSystem>,
+    AddSystem {
+        system: DynSystem,
     },
 }
 
@@ -150,91 +150,123 @@ struct WorldServer {
     rx_command: mpsc::UnboundedReceiver<Command>,
     world: hecs::World,
     resources: Resources,
-    scheduler: Scheduler,
+    startup_schedule: Schedule,
+    schedule: Schedule,
 }
 
 impl WorldServer {
-    fn new(rx_command: mpsc::UnboundedReceiver<Command>, mut builder: Builder) -> Self {
-        builder.resources.insert(Tick::default());
-
-        Self {
-            rx_command,
-            world: builder.world,
-            resources: builder.resources,
-            scheduler: builder.scheduler,
-        }
-    }
-
     async fn run(mut self) -> Result<(), Error> {
-        let mut context = RunSystemContext {
-            command_buffer: hecs::CommandBuffer::new(),
+        /// polls the HandleCommandsSystem first, then the given schedule
+        fn poll_systems(
+            handle_commands_system: &mut HandleCommandsSystem,
+            schedule: &mut Schedule,
+            task_context: &mut std::task::Context,
+            system_context: &mut SystemContext,
+        ) -> Poll<Result<(), Error>> {
+            match handle_commands_system.poll_system(task_context, system_context) {
+                Poll::Pending => {}
+                Poll::Ready(result) => return Poll::Ready(result),
+            }
+
+            match schedule.poll_system(task_context, system_context) {
+                Poll::Pending => {}
+                Poll::Ready(result) => return Poll::Ready(result),
+            }
+
+            system_context.apply_buffered();
+            for system in system_context.add_systems.drain(..) {
+                schedule.add_system(system);
+            }
+
+            Poll::Pending
+        }
+
+        async fn run_systems(
+            handle_commands_system: &mut HandleCommandsSystem,
+            schedule: &mut Schedule,
+            system_context: &mut SystemContext<'_>,
+        ) -> Result<(), Error> {
+            std::future::poll_fn(|task_context| {
+                poll_systems(
+                    handle_commands_system,
+                    schedule,
+                    task_context,
+                    system_context,
+                )
+            })
+            .await
+        }
+
+        let mut system_context = SystemContext {
             world: &mut self.world,
             resources: &mut self.resources,
+            command_buffer: hecs::CommandBuffer::new(),
+            add_systems: vec![],
         };
-        for system in std::mem::take(&mut self.scheduler.startup_systems) {
-            tracing::debug!(label = %system.label(), "running startup system");
-            system.run(&mut context).await?;
-        }
-        context.apply_buffered();
 
-        loop {
-            tokio::select! {
-                command_opt = self.rx_command.recv() => {
-                    let Some(command) = command_opt else { break; };
-                    self.handle_command(command).await?;
-                }
-                _ = self.scheduler.update_systems.wait() => {
-                    let mut context = RunSystemContext {
-                        command_buffer: hecs::CommandBuffer::new(),
-                        world: &mut self.world,
-                        resources: &mut self.resources,
-                    };
-                    self.scheduler.update_systems.run(&mut context).await?;
-                    context.apply_buffered();
-                }
-                _ = self.scheduler.render_systems.wait() => {
-                    let mut context = RunSystemContext {
-                        command_buffer: hecs::CommandBuffer::new(),
-                        world: &mut self.world,
-                        resources: &mut self.resources,
-                    };
-                    self.scheduler.render_systems.run(&mut context).await?;
-                    context.apply_buffered();
-                }
-            }
+        let mut handle_commands_system = HandleCommandsSystem {
+            rx_command: self.rx_command,
+        };
 
-            self.resources.get_mut::<Tick>().unwrap().0 += 1;
-        }
+        tracing::debug!("running startup systems");
+        run_systems(
+            &mut handle_commands_system,
+            &mut self.startup_schedule,
+            &mut system_context,
+        )
+        .await?;
+
+        tracing::debug!("running systems");
+        run_systems(
+            &mut handle_commands_system,
+            &mut self.schedule,
+            &mut system_context,
+        )
+        .await?;
+
+        tracing::debug!("all systems finished");
 
         Ok(())
     }
+}
 
-    async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
-        match command {
-            Command::SubmitCommandBuffer { mut command_buffer } => {
-                command_buffer.run_on(&mut self.world);
-            }
-            Command::SpawnEntity {
-                mut builder,
-                tx_entity,
-            } => {
-                let entity = self.world.spawn(builder.build());
-                let _ = tx_entity.send(entity);
-            }
-            Command::DespawnEntity { entity } => {
-                let _ = self.world.despawn(entity);
-            }
-            Command::RunOneshotSystem { system } => {
-                let mut context = RunSystemContext {
-                    command_buffer: hecs::CommandBuffer::new(),
-                    world: &mut self.world,
-                    resources: &mut self.resources,
-                };
-                system.run(&mut context).await?;
-                context.apply_buffered();
+struct HandleCommandsSystem {
+    rx_command: mpsc::UnboundedReceiver<Command>,
+}
+
+impl System for HandleCommandsSystem {
+    type Error = Error;
+
+    fn label(&self) -> &'static str {
+        "handle-commands"
+    }
+
+    fn poll_system(
+        &mut self,
+        task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        while let Some(command) = ready!(self.rx_command.poll_recv(task_context)) {
+            match command {
+                Command::SubmitCommandBuffer { mut command_buffer } => {
+                    command_buffer.run_on(&mut system_context.world);
+                }
+                Command::SpawnEntity {
+                    mut builder,
+                    tx_entity,
+                } => {
+                    let entity = system_context.world.spawn(builder.build());
+                    let _ = tx_entity.send(entity);
+                }
+                Command::DespawnEntity { entity } => {
+                    let _ = system_context.world.despawn(entity);
+                }
+                Command::AddSystem { system } => {
+                    system_context.add_system(system);
+                }
             }
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }

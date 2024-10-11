@@ -19,7 +19,7 @@ use self::{
         MouseEvent,
     },
 };
-use crate::world::{
+use crate::world::plugin::{
     Plugin,
     RegisterPluginContext,
 };

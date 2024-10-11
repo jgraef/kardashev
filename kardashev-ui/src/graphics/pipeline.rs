@@ -16,7 +16,7 @@ use crate::{
     graphics::{
         camera::Camera,
         draw_batch::DrawBatcher,
-        rendering_system::{
+        render_frame::{
             HasVertexBufferLayout,
             Instance,
         },

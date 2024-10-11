@@ -10,7 +10,7 @@ use crate::graphics::{
     },
     material::LoadedMaterial,
     mesh::LoadedMesh,
-    rendering_system::Instance,
+    render_frame::Instance,
     Backend,
 };
 

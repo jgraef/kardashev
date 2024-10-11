@@ -5,7 +5,7 @@ pub mod material;
 pub mod mesh;
 pub mod model;
 pub mod pipeline;
-pub mod rendering_system;
+pub mod render_frame;
 pub mod texture;
 pub mod transform;
 pub mod util;
@@ -25,6 +25,7 @@ use std::{
         },
         Arc,
     },
+    time::Duration,
 };
 
 use loading::GpuLoadingSystem;
@@ -46,13 +47,27 @@ use crate::{
         loading::BackendResourceCache,
         material::Material,
         mesh::Mesh,
-        rendering_system::RenderingSystem,
+        render_frame::RenderFrame,
         texture::Texture,
     },
-    utils::futures::spawn_local_and_handle_error,
+    utils::{
+        futures::{
+            interval,
+            spawn_local_and_handle_error,
+        },
+        thread_local_cell::ThreadLocalError,
+    },
     world::{
-        Plugin,
-        RegisterPluginContext,
+        plugin::{
+            Plugin,
+            RegisterPluginContext,
+        },
+        system::SystemExt,
+        tick::{
+            FixedTick,
+            Tick,
+            TickRate,
+        },
     },
 };
 
@@ -65,7 +80,13 @@ pub enum Error {
     NoAdapter,
 
     #[error("failed to request device")]
-    RequestDevice(#[from] wgpu::RequestDeviceError),
+    RequestDevice(#[source] ThreadLocalError<wgpu::RequestDeviceError>),
+}
+
+impl From<wgpu::RequestDeviceError> for Error {
+    fn from(error: wgpu::RequestDeviceError) -> Self {
+        Self::RequestDevice(ThreadLocalError::new(error))
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,13 +556,73 @@ impl Plugin for RenderPlugin {
         }
 
         context.resources.insert(BackendResourceCache::default());
+        context.resources.insert(RenderTick::new(30));
+        context.resources.insert(UpdateTick::new(30));
 
         context
-            .scheduler
-            .add_update_system(LocalToGlobalTransformSystem);
+            .schedule
+            .add_system(LocalToGlobalTransformSystem.each_tick::<UpdateTick>());
+
         context
-            .scheduler
-            .add_render_system(GpuLoadingSystem::default());
-        context.scheduler.add_render_system(RenderingSystem);
+            .schedule
+            .add_system(GpuLoadingSystem::default().each_tick::<UpdateTick>());
+
+        context
+            .schedule
+            .add_system(RenderFrame.each_tick::<RenderTick>());
+    }
+}
+
+#[derive(Debug)]
+pub struct RenderTick {
+    fixed_tick: FixedTick,
+}
+
+impl RenderTick {
+    pub fn new(fps: u64) -> Self {
+        Self {
+            fixed_tick: FixedTick::new(interval(Duration::from_millis(1000 / fps))),
+        }
+    }
+}
+
+impl TickRate for RenderTick {
+    fn current(&self) -> Tick {
+        self.fixed_tick.current()
+    }
+
+    fn poll_for<F: Fn(Tick) -> bool>(
+        &mut self,
+        task_context: &mut std::task::Context<'_>,
+        f: F,
+    ) -> std::task::Poll<crate::world::tick::Tick> {
+        self.fixed_tick.poll_for(task_context, f)
+    }
+}
+
+#[derive(Debug)]
+pub struct UpdateTick {
+    fixed_tick: FixedTick,
+}
+
+impl UpdateTick {
+    pub fn new(ups: u64) -> Self {
+        Self {
+            fixed_tick: FixedTick::new(interval(Duration::from_millis(1000 / ups))),
+        }
+    }
+}
+
+impl TickRate for UpdateTick {
+    fn current(&self) -> Tick {
+        self.fixed_tick.current()
+    }
+
+    fn poll_for<F: Fn(Tick) -> bool>(
+        &mut self,
+        task_context: &mut std::task::Context<'_>,
+        f: F,
+    ) -> std::task::Poll<crate::world::tick::Tick> {
+        self.fixed_tick.poll_for(task_context, f)
     }
 }

@@ -144,7 +144,13 @@ impl Interval {
     }
 
     pub async fn tick(&mut self) {
-        self.inner.next().await;
+        self.inner.next().await.expect("interval stream finished");
+    }
+
+    pub fn poll_tick(&mut self, cx: &mut Context) -> Poll<()> {
+        self.inner
+            .poll_next_unpin(cx)
+            .map(|option| option.expect("interval stream finished"))
     }
 }
 

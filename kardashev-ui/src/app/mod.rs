@@ -3,6 +3,7 @@ mod config;
 mod map;
 
 use core::str;
+use std::task::Poll;
 
 use components::window::provide_graphics;
 use hecs::Entity;
@@ -61,10 +62,12 @@ use crate::{
     },
     input::InputPlugin,
     world::{
+        server::World,
+        system::{
+            System,
+            SystemContext,
+        },
         Label,
-        OneshotSystem,
-        RunSystemContext,
-        World,
     },
 };
 
@@ -122,21 +125,24 @@ fn provide_world() {
         .with_startup_system({
             struct StartupSystem;
 
-            impl OneshotSystem for StartupSystem {
+            impl System for StartupSystem {
+                type Error = Error;
+
                 fn label(&self) -> &'static str {
                     "startup"
                 }
 
-                async fn run<'c: 'd, 'd>(
-                    self,
-                    context: &'d mut RunSystemContext<'c>,
-                ) -> Result<(), Error> {
+                fn poll_system(
+                    &mut self,
+                    _task_context: &mut std::task::Context<'_>,
+                    system_context: &mut SystemContext<'_>,
+                ) -> Poll<Result<(), Self::Error>> {
                     //let api_client = context.resources.get::<ApiClient>().unwrap();
                     // todo: we don't want to wait here for a reply, but should spawn a oneshot
                     // system when the request finishes
                     //let stars = api_client.get_stars().await?;
 
-                    let _star_entity = context.world.spawn((
+                    let _star_entity = system_context.world.spawn((
                         Transform {
                             model_matrix: Similarity3::identity(),
                         },
@@ -145,16 +151,18 @@ fn provide_world() {
                         Label::new_static("star"),
                     ));
 
-                    let camera_entity = context.world.spawn((
+                    let camera_entity = system_context.world.spawn((
                         Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
                         Camera::new(1., 45., 0.1, 100.),
                         ClearColor::new(palette::named::BLACK.into_format().with_alpha(1.0)),
                         Label::new_static("camera"),
                     ));
 
-                    context.resources.insert(MainCamera { camera_entity });
+                    system_context
+                        .resources
+                        .insert(MainCamera { camera_entity });
 
-                    Ok(())
+                    Poll::Ready(Ok(()))
                 }
             }
 

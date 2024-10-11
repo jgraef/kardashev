@@ -12,7 +12,10 @@ use serde::{
     Serialize,
 };
 
-use crate::utils::thread_local_cell::ThreadLocalCell;
+use crate::utils::thread_local_cell::{
+    ThreadLocalCell,
+    ThreadLocalError,
+};
 
 const INODES_STORE: &'static str = "inodes";
 const BLOBS_STORE: &'static str = "blobs";
@@ -293,32 +296,21 @@ pub struct InsertBlob {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[error("webfs database error")]
 pub enum Error {
-    #[error("asset cache error: idb error: {message}")]
-    Idb {
-        message: String,
-        error: ThreadLocalCell<idb::Error>,
-    },
-    #[error("asset cache error: serde_wasm_bindgen error: {message}")]
-    SerdeWasmBindgen {
-        message: String,
-        error: ThreadLocalCell<serde_wasm_bindgen::Error>,
-    },
+    Idb(#[source] ThreadLocalError<idb::Error>),
+    SerdeWasmBindgen(#[source] ThreadLocalError<serde_wasm_bindgen::Error>),
 }
 
 impl From<idb::Error> for Error {
     fn from(error: idb::Error) -> Self {
-        let message = error.to_string();
-        let error = ThreadLocalCell::new(error);
-        Self::Idb { message, error }
+        Self::Idb(ThreadLocalError::new(error))
     }
 }
 
 impl From<serde_wasm_bindgen::Error> for Error {
     fn from(error: serde_wasm_bindgen::Error) -> Self {
-        let message = error.to_string();
-        let error = ThreadLocalCell::new(error);
-        Self::SerdeWasmBindgen { message, error }
+        Self::SerdeWasmBindgen(ThreadLocalError::new(error))
     }
 }
 

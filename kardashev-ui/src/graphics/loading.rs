@@ -8,6 +8,7 @@ use std::{
         atomic::AtomicUsize,
         Arc,
     },
+    task::Poll,
 };
 
 use kardashev_protocol::assets::AssetId;
@@ -30,9 +31,9 @@ use crate::{
         any_cache::AnyArcCache,
         thread_local_cell::ThreadLocalCell,
     },
-    world::{
-        RunSystemContext,
+    world::system::{
         System,
+        SystemContext,
     },
 };
 
@@ -267,14 +268,17 @@ pub struct GpuLoadingSystem {
 }
 
 impl System for GpuLoadingSystem {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "gpu-loading"
     }
 
-    async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), crate::error::Error> {
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
         /// Queries assets and loads them to a GPU
         fn load<A: GpuAsset + Send + Sync + 'static>(
             load_context: &LoadContext,
@@ -297,14 +301,15 @@ impl System for GpuLoadingSystem {
                     command_buffer.insert_one(entity, on_gpu);
                 }
             }
+
             Ok(())
         }
 
-        let cache = context
+        let cache = system_context
             .resources
             .get_mut_or_insert_default::<BackendResourceCache>();
 
-        let mut render_targets = context.world.query::<&RenderTarget>();
+        let mut render_targets = system_context.world.query::<&RenderTarget>();
 
         // for each RenderTarget, load assets to its backend
         //
@@ -321,13 +326,13 @@ impl System for GpuLoadingSystem {
 
             load::<Mesh>(
                 &load_context,
-                &context.world,
+                &system_context.world,
                 &mut self.command_buffer,
                 cache,
             )?;
             load::<Material>(
                 &load_context,
-                &context.world,
+                &system_context.world,
                 &mut self.command_buffer,
                 cache,
             )?;
@@ -335,9 +340,9 @@ impl System for GpuLoadingSystem {
 
         drop(render_targets);
 
-        self.command_buffer.run_on(&mut context.world);
+        self.command_buffer.run_on(&mut system_context.world);
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }
 

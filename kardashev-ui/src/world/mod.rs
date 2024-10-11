@@ -1,31 +1,30 @@
-mod plugin;
-mod resource;
-mod schedule;
-mod server;
-mod system;
+pub mod plugin;
+pub mod resource;
+pub mod schedule;
+pub mod server;
+pub mod system;
+pub mod tick;
 
 use std::borrow::Cow;
 
-pub use self::{
+use self::{
     plugin::{
         Plugin,
         RegisterPluginContext,
     },
-    resource::{
-        Resources,
-        Tick,
-    },
-    server::{
-        Builder,
-        World,
-    },
-    system::{
-        NullSystem,
-        OneshotSystem,
-        RunSystemContext,
-        System,
-    },
+    resource::Resources,
 };
+use crate::world::system::DynSystemError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("system error: {system}")]
+    System {
+        system: &'static str,
+        #[source]
+        error: DynSystemError,
+    },
+}
 
 #[derive(Clone, Debug)]
 pub struct Label {

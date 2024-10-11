@@ -1,5 +1,8 @@
 use std::{
-    fmt::Debug,
+    fmt::{
+        Debug,
+        Display,
+    },
     thread::{
         self,
         ThreadId,
@@ -73,4 +76,35 @@ fn check_thread(created_on: ThreadId) -> Result<(), ThreadLocalCellError> {
 pub struct ThreadLocalCellError {
     pub created_on: ThreadId,
     pub accessed_on: ThreadId,
+}
+
+#[derive(Debug)]
+pub struct ThreadLocalError<E> {
+    message: String,
+    error: ThreadLocalCell<E>,
+}
+
+impl<E: Display> ThreadLocalError<E> {
+    pub fn new(error: E) -> Self {
+        Self {
+            message: error.to_string(),
+            error: ThreadLocalCell::new(error),
+        }
+    }
+
+    pub fn try_get(&self) -> Result<&E, ThreadLocalCellError> {
+        self.error.try_get()
+    }
+}
+
+impl<E> Display for ThreadLocalError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl<E: std::error::Error> std::error::Error for ThreadLocalError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.error.try_get().ok()?.source()
+    }
 }

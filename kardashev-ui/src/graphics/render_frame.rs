@@ -1,48 +1,53 @@
+use std::task::Poll;
+
 use bytemuck::{
     Pod,
     Zeroable,
 };
 use kardashev_protocol::assets::Vertex;
 
-use super::{
-    camera::{
-        Camera,
-        ClearColor,
-    },
-    material::Material,
-    mesh::Mesh,
-    transform::GlobalTransform,
-};
 use crate::{
-    error::Error,
     graphics::{
+        camera::{
+            Camera,
+            ClearColor,
+        },
         loading::OnGpu,
+        material::Material,
+        mesh::Mesh,
         pipeline::{
             DepthTexture,
             RenderTarget,
         },
+        transform::GlobalTransform,
         util::color_to_wgpu,
+        Error,
     },
     world::{
+        system::{
+            System,
+            SystemContext,
+        },
         Label,
-        RunSystemContext,
-        System,
     },
 };
 
 #[derive(Debug)]
-pub struct RenderingSystem;
+pub struct RenderFrame;
 
-impl System for RenderingSystem {
+impl System for RenderFrame {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "rendering"
     }
 
-    async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), Error> {
-        let mut cameras = context.world.query::<(
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let mut cameras = system_context.world.query::<(
             &Camera,
             &GlobalTransform,
             Option<&ClearColor>,
@@ -64,7 +69,7 @@ impl System for RenderingSystem {
                 continue;
             }
 
-            tracing::trace!(?label, "rendering camera");
+            tracing::debug!(?label, "rendering camera");
 
             let target_texture = render_target
                 .surface
@@ -118,7 +123,7 @@ impl System for RenderingSystem {
             tracing::trace!("batching");
 
             let mut render_entities =
-                context
+                system_context
                     .world
                     .query::<(&GlobalTransform, &OnGpu<Mesh>, &OnGpu<Material>)>();
 
@@ -152,7 +157,7 @@ impl System for RenderingSystem {
             target_texture.present();
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }
 

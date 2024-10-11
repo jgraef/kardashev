@@ -1,3 +1,5 @@
+use std::task::Poll;
+
 use hecs::Entity;
 use nalgebra::{
     Point3,
@@ -7,11 +9,19 @@ use nalgebra::{
 };
 
 use crate::{
-    error::Error,
+    graphics::{
+        Error,
+        UpdateTick,
+    },
     world::{
-        RunSystemContext,
-        System,
-        Tick,
+        system::{
+            System,
+            SystemContext,
+        },
+        tick::{
+            Tick,
+            TickRate,
+        },
     },
 };
 
@@ -33,7 +43,7 @@ impl Transform {
 #[derive(Clone, Debug, Default)]
 pub struct GlobalTransform {
     pub model_matrix: Similarity3<f32>,
-    pub tick_last_updated: Tick,
+    pub tick_last_updated: Option<Tick>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -45,20 +55,23 @@ pub struct Parent {
 pub struct LocalToGlobalTransformSystem;
 
 impl System for LocalToGlobalTransformSystem {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "local-to-global-transform"
     }
 
-    async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), Error> {
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
         fn local_to_global(
             entity: Entity,
             local: &Transform,
             global: Option<&mut GlobalTransform>,
             parent: Option<&Parent>,
-            tick: &Tick,
+            tick: Tick,
             world: &hecs::World,
             mut command_buffer: &mut hecs::CommandBuffer,
         ) {
@@ -68,7 +81,10 @@ impl System for LocalToGlobalTransformSystem {
                 new_global.as_mut().unwrap()
             });
 
-            if global.tick_last_updated == *tick {
+            if global
+                .tick_last_updated
+                .map_or(false, |tick_last_updated| tick_last_updated >= tick)
+            {
                 return;
             }
 
@@ -78,6 +94,8 @@ impl System for LocalToGlobalTransformSystem {
                         parent.entity,
                     )
                     .unwrap();
+
+                global.tick_last_updated = Some(tick);
 
                 if let Some((parent_local, mut parent_global, parent_parent)) = parent_query.get() {
                     local_to_global(
@@ -92,12 +110,11 @@ impl System for LocalToGlobalTransformSystem {
 
                     global.model_matrix =
                         local.model_matrix * parent_global.as_ref().unwrap().model_matrix;
-                    global.tick_last_updated = *tick;
                 }
             }
             else {
                 global.model_matrix = local.model_matrix;
-                global.tick_last_updated = *tick;
+                global.tick_last_updated = Some(tick);
             }
 
             if let Some(global) = new_global {
@@ -105,10 +122,15 @@ impl System for LocalToGlobalTransformSystem {
             }
         }
 
-        let tick = context.resources.get::<Tick>().unwrap();
-        let mut query = context
-            .world
-            .query::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>();
+        let tick = system_context
+            .resources
+            .get::<UpdateTick>()
+            .unwrap()
+            .current();
+        let mut query =
+            system_context
+                .world
+                .query::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>();
 
         for (entity, (local, global, parent)) in query.iter() {
             local_to_global(
@@ -117,11 +139,11 @@ impl System for LocalToGlobalTransformSystem {
                 global,
                 parent,
                 tick,
-                &context.world,
-                &mut context.command_buffer,
+                &system_context.world,
+                &mut system_context.command_buffer,
             );
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }

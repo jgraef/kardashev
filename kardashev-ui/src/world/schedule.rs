@@ -1,96 +1,66 @@
-use std::time::Duration;
+use std::task::Poll;
 
-use tracing::Instrument;
-
-use super::{
+use crate::world::{
     system::{
-        DynOneshotSystem,
         DynSystem,
-        OneshotSystem,
+        System,
+        SystemContext,
     },
-    RunSystemContext,
-    System,
-};
-use crate::{
-    error::Error,
-    utils::futures::{
-        interval,
-        Interval,
-    },
+    Error,
 };
 
-pub struct Scheduler {
-    pub(super) startup_systems: Vec<Box<dyn DynOneshotSystem>>,
-    pub(super) update_systems: TimedSystems,
-    pub(super) render_systems: TimedSystems,
+#[derive(Debug, Default)]
+pub struct Schedule {
+    systems: Vec<DynSystem>,
 }
 
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self {
-            startup_systems: vec![],
-            update_systems: TimedSystems::new(60),
-            render_systems: TimedSystems::new(60),
-        }
-    }
-}
-
-impl Scheduler {
-    pub fn set_fps(&mut self, fps: u32) {
-        self.render_systems.set_ups(fps);
-    }
-
-    pub fn set_ups(&mut self, ups: u32) {
-        self.update_systems.set_ups(ups);
-    }
-
-    pub fn add_startup_system(&mut self, system: impl OneshotSystem) {
-        self.startup_systems.push(Box::new(system));
-    }
-
-    pub fn add_update_system(&mut self, system: impl System) {
-        self.update_systems.add_system(system);
-    }
-
-    pub fn add_render_system(&mut self, system: impl System) {
-        self.render_systems.add_system(system);
-    }
-}
-
-pub(super) struct TimedSystems {
-    interval: Interval,
-    systems: Vec<Box<dyn DynSystem>>,
-}
-
-impl TimedSystems {
-    pub fn new(ups: u32) -> Self {
-        Self {
-            interval: interval(Duration::from_millis((1000 / ups).into())),
-            systems: vec![],
-        }
-    }
-
-    pub fn set_ups(&mut self, ups: u32) {
-        self.interval = interval(Duration::from_millis((1000 / ups).into()));
-    }
-
+impl Schedule {
     pub fn add_system(&mut self, system: impl System) {
-        self.systems.push(Box::new(system));
+        self.systems.push(system.dyn_system());
+    }
+}
+
+impl System for Schedule {
+    type Error = Error;
+
+    fn label(&self) -> &'static str {
+        "schedule"
     }
 
-    pub async fn wait(&mut self) {
-        self.interval.tick().await;
-    }
+    fn poll_system(
+        &mut self,
+        task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        while !self.systems.is_empty() {
+            let mut i = 0;
+            let mut pending = false;
 
-    pub async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), Error> {
-        for system in &mut self.systems {
-            let span = tracing::debug_span!("system", label = system.label());
-            system.run(context).instrument(span).await?;
+            while i < self.systems.len() {
+                let system = &mut self.systems[i];
+
+                match system.poll_system(task_context, system_context) {
+                    Poll::Ready(Ok(())) => {
+                        self.systems.remove(i);
+                    }
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(Error::System {
+                            system: system.label(),
+                            error,
+                        }))
+                    }
+                    Poll::Pending => {
+                        pending = true;
+                        i += 1;
+                    }
+                }
+            }
+
+            if pending {
+                return Poll::Pending;
+            }
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }

@@ -1,5 +1,6 @@
 use std::{
     any::{
+        type_name,
         Any,
         TypeId,
     },
@@ -22,6 +23,14 @@ impl Resources {
             .map(|resource| resource.downcast_ref().unwrap())
     }
 
+    pub fn try_get<R: 'static>(&self) -> Result<&R, ResourceNotFound> {
+        self.get().ok_or_else(|| {
+            ResourceNotFound {
+                resource: type_name::<R>(),
+            }
+        })
+    }
+
     pub fn get_mut_or_insert_default<R: Default + 'static>(&mut self) -> &mut R {
         self.resources
             .entry(TypeId::of::<R>())
@@ -35,7 +44,18 @@ impl Resources {
             .get_mut(&TypeId::of::<R>())
             .map(|resource| resource.downcast_mut().unwrap())
     }
+
+    pub fn try_get_mut<R: 'static>(&mut self) -> Result<&mut R, ResourceNotFound> {
+        self.get_mut().ok_or_else(|| {
+            ResourceNotFound {
+                resource: type_name::<R>(),
+            }
+        })
+    }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Tick(pub u64);
+#[derive(Debug, thiserror::Error)]
+#[error("resource not found: {resource}")]
+pub struct ResourceNotFound {
+    pub resource: &'static str,
+}

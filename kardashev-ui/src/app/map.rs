@@ -1,3 +1,9 @@
+use std::{
+    future::Future,
+    pin::pin,
+    task::Poll,
+};
+
 use hecs::Entity;
 use kardashev_style::style;
 use leptos::{
@@ -33,12 +39,15 @@ use crate::{
         InputState,
     },
     world::{
-        OneshotSystem,
-        Plugin,
-        RegisterPluginContext,
-        RunSystemContext,
-        System,
-        World,
+        plugin::{
+            Plugin,
+            RegisterPluginContext,
+        },
+        server::World,
+        system::{
+            System,
+            SystemContext,
+        },
     },
 };
 
@@ -56,8 +65,8 @@ pub fn Map() -> impl IntoView {
         let world = expect_context::<World>();
         let render_target = RenderTarget::from_surface(surface);
 
-        world.run_oneshot_system(AttachRenderTarget {
-            render_target,
+        world.add_system(AttachRenderTarget {
+            render_target: Some(render_target),
             camera_entity,
         })
     };
@@ -74,7 +83,7 @@ pub fn Map() -> impl IntoView {
                 if let Some(camera_entity) = camera_entity.get_value() {
                     let world = expect_context::<World>();
                     let aspect = (surface_size.width as f32) / (surface_size.height as f32);
-                    world.run_oneshot_system(ChangeCameraAspectRatio {
+                    world.add_system(ChangeCameraAspectRatio {
                         camera_entity,
                         aspect,
                     });
@@ -88,7 +97,7 @@ pub fn Map() -> impl IntoView {
         camera_entity.update_value(|camera_entity| {
             if let Some(camera_entity) = *camera_entity {
                 let world = expect_context::<World>();
-                world.run_oneshot_system(DetachRenderTarget { camera_entity });
+                world.add_system(DetachRenderTarget { camera_entity });
             }
             *camera_entity = None;
         });
@@ -101,22 +110,35 @@ pub fn Map() -> impl IntoView {
 
 #[derive(Debug)]
 struct AttachRenderTarget {
-    render_target: RenderTarget,
+    render_target: Option<RenderTarget>,
     camera_entity: StoredValue<Option<Entity>>,
 }
 
-impl OneshotSystem for AttachRenderTarget {
+impl System for AttachRenderTarget {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "attach-render-target"
     }
 
-    async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
-        if let Some(MainCamera { camera_entity }) = context.resources.get::<MainCamera>() {
-            let _ = context.world.insert_one(*camera_entity, self.render_target);
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let render_target = self
+            .render_target
+            .take()
+            .expect("system was not supposed to be polled again");
+
+        if let Some(MainCamera { camera_entity }) = system_context.resources.get::<MainCamera>() {
+            let _ = system_context
+                .world
+                .insert_one(*camera_entity, render_target);
             self.camera_entity.set_value(Some(*camera_entity));
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -124,14 +146,22 @@ struct DetachRenderTarget {
     camera_entity: Entity,
 }
 
-impl OneshotSystem for DetachRenderTarget {
+impl System for DetachRenderTarget {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "detach-render-target"
     }
 
-    async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
-        let _ = context.world.remove_one::<RenderTarget>(self.camera_entity);
-        Ok(())
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let _ = system_context
+            .world
+            .remove_one::<RenderTarget>(self.camera_entity);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -146,19 +176,53 @@ struct MapCameraControllerSystem {
 }
 
 impl System for MapCameraControllerSystem {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "map-camera-controller"
     }
 
-    async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), Error> {
-        let query = context
+    fn poll_system(
+        &mut self,
+        task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        // if at least one future is pending
+        #[allow(unused_assignments)]
+        let mut pending = false;
+
+        // todo: listen for component-added events
+        // for now we'll pretend the events thingy exists, and is always pending
+        pending = true;
+
+        let query = system_context
             .world
             .query_mut::<(&mut MapCameraController, &mut Transform)>();
 
-        for (_, (controller, transform)) in query {
+        for (entity, (controller, transform)) in query {
+            {
+                // `changed` is cancel-safe, so we can do this.
+                // but this needs to be in a block, otherwise rustc will complain that
+                // `controller.input_state` is still borrowed by the future.
+                match pin!(controller.input_state.changed()).poll(task_context) {
+                    Poll::Pending => {
+                        pending = true;
+                        continue;
+                    }
+                    Poll::Ready(Ok(())) => {
+                        // the input state changed
+                    }
+                    Poll::Ready(Err(_)) => {
+                        // sender dropped, remove the component
+                        tracing::debug!(?entity, "input state sender dropped. removing map camera controller from entity");
+                        system_context
+                            .command_buffer
+                            .remove_one::<MapCameraController>(entity);
+                        continue;
+                    }
+                }
+            }
+
             let input_state = controller.input_state.borrow_and_update();
 
             for key_code in &input_state.keys_pressed {
@@ -186,7 +250,15 @@ impl System for MapCameraControllerSystem {
             }
         }
 
-        Ok(())
+        // at least one future is still pending. if there are no controllers, it will
+        // usually still be pending by listening for component-added events (todo)
+        if pending {
+            Poll::Pending
+        }
+        else {
+            // otherwise there is no more work to be done by this system
+            Poll::Ready(Ok(()))
+        }
     }
 }
 
@@ -195,7 +267,7 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn register(self, context: RegisterPluginContext) {
         context
-            .scheduler
-            .add_update_system(MapCameraControllerSystem { step_size: 0.5 });
+            .schedule
+            .add_system(MapCameraControllerSystem { step_size: 0.5 });
     }
 }

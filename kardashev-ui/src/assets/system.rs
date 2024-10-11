@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    task::Poll,
+};
 
 use kardashev_client::AssetClient;
 use url::Url;
@@ -8,12 +11,19 @@ use crate::{
         dyn_type::DynAssetType,
         load::LoadFromAsset,
         server::AssetServer,
+        Error,
     },
+    graphics::UpdateTick,
     world::{
-        Plugin,
-        RegisterPluginContext,
-        RunSystemContext,
-        System,
+        plugin::{
+            Plugin,
+            RegisterPluginContext,
+        },
+        system::{
+            System,
+            SystemContext,
+            SystemExt,
+        },
     },
 };
 
@@ -25,21 +35,24 @@ pub struct AssetLoaderSystem {
 }
 
 impl System for AssetLoaderSystem {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "asset-loader"
     }
 
-    async fn run<'s: 'c, 'c: 'd, 'd>(
-        &'s mut self,
-        context: &'d mut RunSystemContext<'c>,
-    ) -> Result<(), crate::error::Error> {
-        let Some(asset_type_registry) = context.resources.get::<AssetTypeRegistry>()
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let Some(asset_type_registry) = system_context.resources.get::<AssetTypeRegistry>()
         else {
             tracing::warn!("missing AssetTypeRegistry resource");
-            return Ok(());
+            return Poll::Ready(Ok(()));
         };
 
-        let asset_server = context
+        let asset_server = system_context
             .resources
             .get::<AssetServer>()
             .expect("AssetServer resource missing");
@@ -49,14 +62,18 @@ impl System for AssetLoaderSystem {
                 asset_type = asset_type.asset_type_name(),
                 "running asset loader system"
             );
-            asset_type.loader_system(asset_server, &mut context.world, &mut self.command_buffer);
+            asset_type.loader_system(
+                asset_server,
+                &mut system_context.world,
+                &mut self.command_buffer,
+            );
         }
 
         // note: we use our own command buffer so that loaded assets are already
         // attached right after this system has run
-        self.command_buffer.run_on(&mut context.world);
+        self.command_buffer.run_on(&mut system_context.world);
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -118,7 +135,7 @@ impl Plugin for AssetsPlugin {
             .resources
             .insert(AssetTypeRegistry::new(asset_server));
         context
-            .scheduler
-            .add_update_system(AssetLoaderSystem::default());
+            .schedule
+            .add_system(AssetLoaderSystem::default().each_tick::<UpdateTick>());
     }
 }

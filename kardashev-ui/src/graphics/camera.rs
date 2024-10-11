@@ -1,3 +1,5 @@
+use std::task::Poll;
+
 use hecs::Entity;
 use nalgebra::Perspective3;
 use palette::{
@@ -7,9 +9,9 @@ use palette::{
 
 use crate::{
     error::Error,
-    world::{
-        OneshotSystem,
-        RunSystemContext,
+    world::system::{
+        System,
+        SystemContext,
     },
 };
 
@@ -73,17 +75,23 @@ pub struct ChangeCameraAspectRatio {
     pub aspect: f32,
 }
 
-impl OneshotSystem for ChangeCameraAspectRatio {
+impl System for ChangeCameraAspectRatio {
+    type Error = Error;
+
     fn label(&self) -> &'static str {
         "change-camera-aspect-ratio"
     }
 
-    async fn run<'c: 'd, 'd>(self, context: &'d mut RunSystemContext<'c>) -> Result<(), Error> {
-        let mut camera = context
+    fn poll_system(
+        &mut self,
+        _task_context: &mut std::task::Context<'_>,
+        system_context: &mut SystemContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        let mut camera = system_context
             .world
             .get::<&mut Camera>(self.camera_entity)
             .unwrap();
         camera.set_aspect(self.aspect);
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 }
