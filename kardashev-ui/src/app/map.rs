@@ -28,8 +28,11 @@ use crate::{
     },
     error::Error,
     graphics::{
-        camera::ChangeCameraAspectRatio,
-        pipeline::RenderTarget,
+        camera::{
+            ChangeCameraAspectRatio,
+            RenderTarget,
+        },
+        render_3d::Render3d,
         transform::Transform,
         Surface,
     },
@@ -57,18 +60,21 @@ struct Style;
 #[component]
 pub fn Map() -> impl IntoView {
     let camera_entity = store_value(None);
-    let (tx_input_state, _rx_input_state) = watch::channel(InputState::default());
+    let (tx_input_state, rx_input_state) = watch::channel(InputState::default());
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
 
         let world = expect_context::<World>();
-        let render_target = RenderTarget::from_surface(surface);
+        let render_target = RenderTarget::from_surface::<Render3d>(surface);
 
-        world.add_system(AttachRenderTarget {
+        world.add_system(AttachCamera {
             render_target: Some(render_target),
+            controller: Some(MapCameraController {
+                input_state: rx_input_state,
+            }),
             camera_entity,
-        })
+        });
     };
 
     let on_event = move |event| {
@@ -97,7 +103,7 @@ pub fn Map() -> impl IntoView {
         camera_entity.update_value(|camera_entity| {
             if let Some(camera_entity) = *camera_entity {
                 let world = expect_context::<World>();
-                world.add_system(DetachRenderTarget { camera_entity });
+                world.add_system(DetachCamera { camera_entity });
             }
             *camera_entity = None;
         });
@@ -109,12 +115,13 @@ pub fn Map() -> impl IntoView {
 }
 
 #[derive(Debug)]
-struct AttachRenderTarget {
-    render_target: Option<RenderTarget>,
+struct AttachCamera {
     camera_entity: StoredValue<Option<Entity>>,
+    render_target: Option<RenderTarget>,
+    controller: Option<MapCameraController>,
 }
 
-impl System for AttachRenderTarget {
+impl System for AttachCamera {
     type Error = Error;
 
     fn label(&self) -> &'static str {
@@ -130,11 +137,15 @@ impl System for AttachRenderTarget {
             .render_target
             .take()
             .expect("system was not supposed to be polled again");
+        let controller = self
+            .controller
+            .take()
+            .expect("system was not supposed to be polled again");
 
         if let Some(MainCamera { camera_entity }) = system_context.resources.get::<MainCamera>() {
             let _ = system_context
                 .world
-                .insert_one(*camera_entity, render_target);
+                .insert(*camera_entity, (render_target, controller));
             self.camera_entity.set_value(Some(*camera_entity));
         }
 
@@ -142,11 +153,11 @@ impl System for AttachRenderTarget {
     }
 }
 
-struct DetachRenderTarget {
+struct DetachCamera {
     camera_entity: Entity,
 }
 
-impl System for DetachRenderTarget {
+impl System for DetachCamera {
     type Error = Error;
 
     fn label(&self) -> &'static str {
@@ -224,29 +235,21 @@ impl System for MapCameraControllerSystem {
             }
 
             let input_state = controller.input_state.borrow_and_update();
+            tracing::debug!(?input_state);
 
             for key_code in &input_state.keys_pressed {
-                match *key_code {
-                    KeyCode::KeyW => {
-                        transform.model_matrix *= Translation3::new(0.0, self.step_size, 0.0)
+                let movement_matrix = match *key_code {
+                    KeyCode::KeyW => Translation3::new(0.0, self.step_size, 0.0),
+                    KeyCode::KeyA => Translation3::new(-self.step_size, 0.0, 0.0),
+                    KeyCode::KeyS => Translation3::new(0.0, -self.step_size, 0.0),
+                    KeyCode::KeyD => Translation3::new(-self.step_size, 0.0, 0.0),
+                    KeyCode::KeyR => Translation3::new(0.0, 0.0, -self.step_size),
+                    KeyCode::KeyF => Translation3::new(0.0, 0.0, self.step_size),
+                    _ => {
+                        continue;
                     }
-                    KeyCode::KeyA => {
-                        transform.model_matrix *= Translation3::new(-self.step_size, 0.0, 0.0)
-                    }
-                    KeyCode::KeyS => {
-                        transform.model_matrix *= Translation3::new(0.0, -self.step_size, 0.0)
-                    }
-                    KeyCode::KeyD => {
-                        transform.model_matrix *= Translation3::new(-self.step_size, 0.0, 0.0)
-                    }
-                    KeyCode::KeyR => {
-                        transform.model_matrix *= Translation3::new(0.0, 0.0, -self.step_size)
-                    }
-                    KeyCode::KeyF => {
-                        transform.model_matrix *= Translation3::new(0.0, 0.0, self.step_size)
-                    }
-                    _ => {}
-                }
+                };
+                transform.model_matrix = movement_matrix * transform.model_matrix;
             }
         }
 

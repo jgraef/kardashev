@@ -1,4 +1,7 @@
-use std::task::Poll;
+use std::{
+    sync::Arc,
+    task::Poll,
+};
 
 use hecs::Entity;
 use nalgebra::Perspective3;
@@ -9,6 +12,17 @@ use palette::{
 
 use crate::{
     error::Error,
+    graphics::{
+        backend::Backend,
+        render_frame::{
+            CreateRenderPass,
+            RenderPass,
+        },
+        Surface,
+        SurfaceSizeListener,
+        SurfaceVisibilityListener,
+    },
+    utils::thread_local_cell::ThreadLocalCell,
     world::system::{
         System,
         SystemContext,
@@ -16,7 +30,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Camera {
+pub struct CameraProjection {
     pub aspect: f32,
     pub fovy: f32,
     pub z_near: f32,
@@ -25,7 +39,7 @@ pub struct Camera {
     pub projection_matrix: Perspective3<f32>,
 }
 
-impl Camera {
+impl CameraProjection {
     pub fn new(aspect: f32, fovy: f32, z_near: f32, z_far: f32) -> Self {
         Self {
             aspect,
@@ -89,9 +103,43 @@ impl System for ChangeCameraAspectRatio {
     ) -> Poll<Result<(), Self::Error>> {
         let mut camera = system_context
             .world
-            .get::<&mut Camera>(self.camera_entity)
+            .get::<&mut CameraProjection>(self.camera_entity)
             .unwrap();
         camera.set_aspect(self.aspect);
         Poll::Ready(Ok(()))
+    }
+}
+
+#[derive(Debug)]
+pub struct RenderTarget {
+    pub(super) inner: ThreadLocalCell<RenderTargetInner>,
+}
+
+impl RenderTarget {
+    pub fn from_surface<R: CreateRenderPass + 'static>(surface: &Surface) -> Self {
+        Self {
+            inner: ThreadLocalCell::new(RenderTargetInner {
+                surface: surface.surface.clone(),
+                surface_size_listener: surface.size_listener(),
+                surface_visibility_listener: surface.visibility_listener(),
+                backend: surface.backend.clone(),
+                render_pass: Box::new(R::create_render_pass(surface)),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct RenderTargetInner {
+    pub surface: Arc<wgpu::Surface<'static>>,
+    pub surface_size_listener: SurfaceSizeListener,
+    pub surface_visibility_listener: SurfaceVisibilityListener,
+    pub backend: Backend,
+    pub render_pass: Box<dyn RenderPass>,
+}
+
+impl RenderTargetInner {
+    pub fn is_visible(&self) -> bool {
+        self.surface_visibility_listener.is_visible()
     }
 }

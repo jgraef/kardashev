@@ -1,26 +1,22 @@
+pub mod backend;
 pub mod camera;
 pub mod draw_batch;
-pub mod loading;
 pub mod material;
 pub mod mesh;
 pub mod model;
 pub mod pipeline;
+pub mod render_3d;
 pub mod render_frame;
 pub mod texture;
 pub mod transform;
-pub mod util;
+pub mod utils;
 
 use std::{
     fmt::Debug,
-    hash::Hash,
-    num::{
-        NonZeroU32,
-        NonZeroUsize,
-    },
+    num::NonZeroU32,
     sync::{
         atomic::{
             AtomicU32,
-            AtomicUsize,
             Ordering,
         },
         Arc,
@@ -28,7 +24,6 @@ use std::{
     time::Duration,
 };
 
-use loading::GpuLoadingSystem;
 use serde::{
     Deserialize,
     Serialize,
@@ -44,11 +39,15 @@ use web_sys::HtmlCanvasElement;
 use crate::{
     assets::system::AssetTypeRegistry,
     graphics::{
-        loading::BackendResourceCache,
+        backend::{
+            Backend,
+            BackendType,
+        },
         material::Material,
         mesh::Mesh,
-        render_frame::RenderFrame,
+        render_frame::RenderingSystem,
         texture::Texture,
+        utils::GpuResourceCache,
     },
     utils::{
         futures::{
@@ -159,91 +158,6 @@ impl Graphics {
             tx_resize,
             tx_visible,
         })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BackendType {
-    WebGpu,
-    #[default]
-    WebGl,
-}
-
-impl BackendType {
-    fn uses_shared_backend(&self) -> bool {
-        matches!(self, Self::WebGpu)
-    }
-
-    fn as_wgpu(&self) -> wgpu::Backends {
-        match self {
-            BackendType::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
-            BackendType::WebGl => wgpu::Backends::GL,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BackendId(NonZeroUsize);
-
-#[derive(Clone, Debug)]
-pub struct Backend {
-    id: BackendId,
-    instance: Arc<wgpu::Instance>,
-    adapter: Arc<wgpu::Adapter>,
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-}
-
-impl Backend {
-    async fn new(
-        instance: Arc<wgpu::Instance>,
-        config: &Config,
-        compatible_surface: Option<&wgpu::Surface<'static>>,
-    ) -> Result<Self, Error> {
-        tracing::debug!("creating render adapter");
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: config.power_preference,
-                compatible_surface: compatible_surface,
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| Error::NoAdapter)?;
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: Default::default(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
-            .await?;
-
-        device.on_uncaptured_error(Box::new(|error| {
-            tracing::error!(%error, "uncaptured wgpu error");
-            panic!("uncaptured wgpu error: {error}");
-        }));
-
-        tracing::debug!("device features: {:#?}", device.features());
-
-        static IDS: AtomicUsize = AtomicUsize::new(1);
-        let id = BackendId(NonZeroUsize::new(IDS.fetch_add(1, Ordering::Relaxed)).unwrap());
-
-        Ok(Self {
-            id,
-            instance,
-            adapter: Arc::new(adapter),
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-        })
-    }
-
-    pub fn id(&self) -> BackendId {
-        self.id
     }
 }
 
@@ -555,7 +469,7 @@ impl Plugin for RenderPlugin {
             tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");
         }
 
-        context.resources.insert(BackendResourceCache::default());
+        context.resources.insert(GpuResourceCache::default());
         context.resources.insert(RenderTick::new(30));
         context.resources.insert(UpdateTick::new(30));
 
@@ -565,11 +479,7 @@ impl Plugin for RenderPlugin {
 
         context
             .schedule
-            .add_system(GpuLoadingSystem::default().each_tick::<UpdateTick>());
-
-        context
-            .schedule
-            .add_system(RenderFrame.each_tick::<RenderTick>());
+            .add_system(RenderingSystem.each_tick::<RenderTick>());
     }
 }
 

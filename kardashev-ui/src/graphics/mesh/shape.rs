@@ -1,11 +1,11 @@
 use kardashev_protocol::assets::{
+    MeshData,
     PrimitiveTopology,
     Vertex,
 };
 
 use super::{
     MeshBuilder,
-    MeshData,
     Meshable,
 };
 

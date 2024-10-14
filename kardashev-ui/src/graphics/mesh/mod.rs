@@ -3,43 +3,88 @@ pub mod shape;
 
 use std::sync::Arc;
 
-use kardashev_client::DownloadError;
+use kardashev_client::{
+    AssetClient,
+    DownloadError,
+};
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
 };
 pub use kardashev_protocol::assets::{
-    MeshData,
+    MeshData as CpuMesh,
     PrimitiveTopology,
     Vertex,
 };
 use wgpu::util::DeviceExt;
 
-use super::loading::{
-    GpuAsset,
-    LoadContext,
-};
 use crate::{
     assets::{
         load::{
             LoadAssetContext,
             LoadFromAsset,
         },
-        store::AssetStoreMetaData,
+        store::{
+            AssetStoreGuard,
+            AssetStoreMetaData,
+        },
         AssetNotFound,
         MaybeHasAssetId,
     },
-    utils::web_fs::{
-        self,
-        OpenOptions,
+    graphics::{
+        backend::{
+            Backend,
+            PerBackend,
+        },
+        utils::GpuResourceCache,
+    },
+    utils::{
+        thread_local_cell::ThreadLocalCell,
+        web_fs::{
+            self,
+            OpenOptions,
+        },
     },
 };
 
 #[derive(Debug)]
 pub struct Mesh {
-    pub asset_id: Option<AssetId>,
-    pub label: Option<String>,
-    pub mesh_data: Arc<MeshData>,
+    asset_id: Option<AssetId>,
+    label: Option<String>,
+    cpu: Option<Arc<CpuMesh>>,
+    gpu: PerBackend<Arc<ThreadLocalCell<GpuMesh>>>,
+}
+
+impl Mesh {
+    pub fn cpu(&self) -> Option<&CpuMesh> {
+        self.cpu.as_deref()
+    }
+
+    pub fn gpu(
+        &mut self,
+        backend: &Backend,
+        cache: &mut GpuResourceCache,
+    ) -> Result<&Arc<ThreadLocalCell<GpuMesh>>, MeshError> {
+        self.gpu.get_or_try_insert(backend.id, || {
+            let mesh_data = self.cpu.as_ref().ok_or_else(|| MeshError::NoCpuMesh)?;
+            if let Some(asset_id) = self.asset_id {
+                cache.get_or_try_insert(backend.id, asset_id, || {
+                    Ok::<_, MeshError>(Arc::new(ThreadLocalCell::new(load_mesh_to_gpu(
+                        mesh_data,
+                        self.label.as_deref(),
+                        backend,
+                    )?)))
+                })
+            }
+            else {
+                Ok::<_, MeshError>(Arc::new(ThreadLocalCell::new(load_mesh_to_gpu(
+                    &mesh_data,
+                    self.label.as_deref(),
+                    backend,
+                )?)))
+            }
+        })
+    }
 }
 
 impl MaybeHasAssetId for Mesh {
@@ -50,180 +95,158 @@ impl MaybeHasAssetId for Mesh {
 
 impl LoadFromAsset for Mesh {
     type Dist = dist::Mesh;
-    type Error = MeshLoadError;
+    type Error = MeshError;
     type Args = ();
 
     async fn load<'a, 'b: 'a>(
         asset_id: AssetId,
         _args: (),
         context: &'a mut LoadAssetContext<'b>,
-    ) -> Result<Self, MeshLoadError> {
+    ) -> Result<Self, MeshError> {
         let dist = context
             .dist_assets
             .get::<dist::Mesh>(asset_id)
             .ok_or_else(|| AssetNotFound { asset_id })?;
 
-        let mesh_data = context
+        let cpu = context
             .cache
             .get_or_try_insert_async(asset_id, || {
-                async {
-                    let mut file = context
-                        .asset_store
-                        .open(&dist.mesh, OpenOptions::new().create(true))
-                        .await?;
-
-                    let mut data = None;
-
-                    if !file.was_created() {
-                        let meta_data = file
-                            .meta_data()
-                            .get::<AssetStoreMetaData>("asset")?
-                            .unwrap_or_default();
-                        if meta_data.build_time.map_or(false, |t| t >= dist.build_time) {
-                            data = Some(file.read().await?);
-                        }
-                    }
-
-                    let data = if let Some(data) = data {
-                        data
-                    }
-                    else {
-                        let fetched_data = context
-                            .client
-                            .download_file(&dist.mesh)
-                            .await?
-                            .bytes()
-                            .await?;
-                        file.meta_data_mut().insert(
-                            "asset",
-                            &AssetStoreMetaData {
-                                asset_id: Some(dist.id),
-                                build_time: Some(dist.build_time),
-                            },
-                        )?;
-                        file.write(&fetched_data).await?;
-                        fetched_data
-                    };
-
-                    let mesh_data: MeshData = rmp_serde::from_slice(&data)?;
-                    Ok::<_, MeshLoadError>(Arc::new(mesh_data))
-                }
+                load_mesh_from_server(dist, &context.asset_store, &context.client)
             })
             .await?;
 
         Ok(Self {
             asset_id: Some(asset_id),
             label: dist.label.clone(),
-            mesh_data,
+            cpu: Some(cpu),
+            gpu: PerBackend::default(),
         })
     }
 }
 
-impl GpuAsset for Mesh {
-    type Loaded = LoadedMesh;
+async fn load_mesh_from_server<'a, 'b: 'a>(
+    dist: &dist::Mesh,
+    asset_store: &AssetStoreGuard,
+    client: &AssetClient,
+) -> Result<Arc<CpuMesh>, MeshError> {
+    let mut file = asset_store
+        .open(&dist.mesh, OpenOptions::new().create(true))
+        .await?;
 
-    fn load(&self, context: &LoadContext) -> Result<Self::Loaded, super::Error> {
-        if self.mesh_data.primitive_topology != PrimitiveTopology::TriangleList {
-            todo!(
-                "trying to load mesh with incompatible primitive topology: {:?}",
-                self.mesh_data.primitive_topology
-            );
+    let mut data = None;
+
+    if !file.was_created() {
+        let meta_data = file
+            .meta_data()
+            .get::<AssetStoreMetaData>("asset")?
+            .unwrap_or_default();
+        if meta_data.build_time.map_or(false, |t| t >= dist.build_time) {
+            data = Some(file.read().await?);
         }
-
-        let vertex_buffer =
-            context
-                .backend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self
-                        .label
-                        .as_ref()
-                        .map(|l| format!("vertex buffer: {l}"))
-                        .as_deref(),
-                    contents: bytemuck::cast_slice(&self.mesh_data.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-        let index_buffer =
-            context
-                .backend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self
-                        .label
-                        .as_ref()
-                        .map(|l| format!("index buffer: {l}"))
-                        .as_deref(),
-                    contents: bytemuck::cast_slice(&self.mesh_data.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
-        Ok(LoadedMesh {
-            vertex_buffer,
-            index_buffer,
-            num_indices: self.mesh_data.indices.len().try_into().unwrap(),
-        })
     }
+
+    let data = if let Some(data) = data {
+        data
+    }
+    else {
+        let fetched_data = client.download_file(&dist.mesh).await?.bytes().await?;
+        file.meta_data_mut().insert(
+            "asset",
+            &AssetStoreMetaData {
+                asset_id: Some(dist.id),
+                build_time: Some(dist.build_time),
+            },
+        )?;
+        file.write(&fetched_data).await?;
+        fetched_data
+    };
+
+    let mesh: CpuMesh = rmp_serde::from_slice(&data)?;
+    Ok::<_, MeshError>(Arc::new(mesh))
 }
 
-impl From<MeshData> for Mesh {
-    fn from(mesh_data: MeshData) -> Self {
+fn load_mesh_to_gpu(
+    mesh: &CpuMesh,
+    label: Option<&str>,
+    backend: &Backend,
+) -> Result<GpuMesh, MeshError> {
+    if mesh.primitive_topology != PrimitiveTopology::TriangleList {
+        todo!(
+            "trying to load mesh with incompatible primitive topology: {:?}",
+            mesh.primitive_topology
+        );
+    }
+
+    let vertex_buffer = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: label
+                .as_ref()
+                .map(|l| format!("vertex buffer: {l}"))
+                .as_deref(),
+            contents: bytemuck::cast_slice(&mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+    let index_buffer = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: label
+                .as_ref()
+                .map(|l| format!("index buffer: {l}"))
+                .as_deref(),
+            contents: bytemuck::cast_slice(&mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+    Ok(GpuMesh {
+        vertex_buffer,
+        index_buffer,
+        num_indices: mesh.indices.len().try_into().unwrap(),
+    })
+}
+
+impl From<CpuMesh> for Mesh {
+    fn from(mesh: CpuMesh) -> Self {
         Mesh {
             asset_id: None,
             label: None,
-            mesh_data: Arc::new(mesh_data),
+            cpu: Some(Arc::new(mesh)),
+            gpu: PerBackend::default(),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("mesh load error")]
-pub enum MeshLoadError {
+pub enum MeshError {
     AssetNotFound(#[from] AssetNotFound),
     Download(#[from] DownloadError),
     WebFs(#[from] web_fs::Error),
     Decode(#[from] rmp_serde::decode::Error),
+    NoCpuMesh,
 }
 
-impl LoadedMesh {
-    pub fn from_mesh_data(
-        mesh_data: &MeshData,
-        context: &LoadContext,
-        label: Option<&str>,
-    ) -> Self {
-        let vertex_buffer =
-            context
-                .backend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: label.map(|l| format!("vertex buffer: {l}")).as_deref(),
-                    contents: bytemuck::cast_slice(&mesh_data.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+#[derive(Debug)]
+pub struct GpuMesh {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub num_indices: u32,
+}
 
-        let index_buffer =
-            context
-                .backend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: label.map(|l| format!("index buffer: {l}")).as_deref(),
-                    contents: bytemuck::cast_slice(&mesh_data.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
-        LoadedMesh {
-            vertex_buffer,
-            index_buffer,
-            num_indices: mesh_data.indices.len().try_into().unwrap(),
+impl GpuMesh {
+    pub fn id(&self) -> GpuMeshId {
+        GpuMeshId {
+            vertex: self.vertex_buffer.global_id(),
+            index: self.index_buffer.global_id(),
         }
     }
 }
 
-#[derive(Debug)]
-pub struct LoadedMesh {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub num_indices: u32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GpuMeshId {
+    vertex: wgpu::Id<wgpu::Buffer>,
+    index: wgpu::Id<wgpu::Buffer>,
 }
 
 pub trait Meshable {
@@ -233,5 +256,5 @@ pub trait Meshable {
 }
 
 pub trait MeshBuilder {
-    fn build(&self) -> MeshData;
+    fn build(&self) -> CpuMesh;
 }

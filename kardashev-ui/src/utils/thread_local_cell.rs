@@ -41,11 +41,16 @@ impl<T> ThreadLocalCell<T> {
     }
 }
 
-impl<T> Debug for ThreadLocalCell<T> {
+impl<T: Debug> Debug for ThreadLocalCell<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ThreadLocalCell")
-            .field("created_on", &self.created_on)
-            .finish_non_exhaustive()
+        let mut debug_struct = f.debug_struct("ThreadLocalCell");
+        debug_struct.field("created_on", &self.created_on);
+        if let Ok(inner) = self.try_get() {
+            debug_struct.field("inner", inner).finish()
+        }
+        else {
+            debug_struct.finish_non_exhaustive()
+        }
     }
 }
 

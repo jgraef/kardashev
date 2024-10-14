@@ -1,17 +1,23 @@
 use std::{
     collections::HashMap,
     ops::Range,
+    sync::Arc,
 };
 
-use crate::graphics::{
-    loading::{
-        BackendResource,
-        BackendResourceId,
+use crate::{
+    graphics::{
+        backend::Backend,
+        material::{
+            GpuMaterial,
+            GpuMaterialId,
+        },
+        mesh::{
+            GpuMesh,
+            GpuMeshId,
+        },
+        render_3d::Instance,
     },
-    material::LoadedMaterial,
-    mesh::LoadedMesh,
-    render_frame::Instance,
-    Backend,
+    utils::thread_local_cell::ThreadLocalCell,
 };
 
 #[derive(Debug)]
@@ -94,14 +100,14 @@ impl DrawBatcher {
 
     pub fn push(
         &mut self,
-        mesh: &BackendResource<LoadedMesh>,
-        material: &BackendResource<LoadedMaterial>,
+        mesh: &Arc<ThreadLocalCell<GpuMesh>>,
+        material: &Arc<ThreadLocalCell<GpuMaterial>>,
         instance: Instance,
     ) {
         self.entries
             .entry(DrawBatchKey {
-                mesh_id: mesh.id(),
-                material_id: material.id(),
+                mesh_id: mesh.get().id(),
+                material_id: material.get().id(),
             })
             .or_insert_with(|| {
                 DrawBatchEntry {
@@ -117,22 +123,22 @@ impl DrawBatcher {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct DrawBatchKey {
-    mesh_id: BackendResourceId<LoadedMesh>,
-    material_id: BackendResourceId<LoadedMaterial>,
+    mesh_id: GpuMeshId,
+    material_id: GpuMaterialId,
 }
 
 #[derive(Debug)]
 struct DrawBatchEntry {
     instances: Vec<Instance>,
-    mesh: BackendResource<LoadedMesh>,
-    material: BackendResource<LoadedMaterial>,
+    mesh: Arc<ThreadLocalCell<GpuMesh>>,
+    material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
 
 #[derive(Debug)]
 struct DrawBatch {
     range: Range<u32>,
-    mesh: BackendResource<LoadedMesh>,
-    material: BackendResource<LoadedMaterial>,
+    mesh: Arc<ThreadLocalCell<GpuMesh>>,
+    material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
 
 fn create_instance_buffer(backend: &Backend, size: usize) -> wgpu::Buffer {

@@ -55,6 +55,7 @@ serde_json = "1.0.128"
 gloo-file = "0.3.0"
 wasm-streams = "0.4.1"
 tokio-util = { version = "0.7.12", features = ["compat", "io"] }
+arrayvec = "0.7.6"
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

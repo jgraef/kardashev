@@ -39,6 +39,7 @@ use crate::{
             Config,
             Urls,
         },
+        map::MapPlugin,
     },
     assets::{
         load::Load,
@@ -47,7 +48,7 @@ use crate::{
     error::Error,
     graphics::{
         camera::{
-            Camera,
+            CameraProjection,
             ClearColor,
         },
         material::Material,
@@ -122,6 +123,7 @@ fn provide_world() {
         .with_plugin(AssetsPlugin::from_url(asset_url))
         .with_plugin(InputPlugin::default())
         .with_plugin(RenderPlugin)
+        .with_plugin(MapPlugin)
         .with_startup_system({
             struct StartupSystem;
 
@@ -153,7 +155,7 @@ fn provide_world() {
 
                     let camera_entity = system_context.world.spawn((
                         Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
-                        Camera::new(1., 45., 0.1, 100.),
+                        CameraProjection::new(1., 45., 0.1, 100.),
                         ClearColor::new(palette::named::BLACK.into_format().with_alpha(1.0)),
                         Label::new_static("camera"),
                     ));
