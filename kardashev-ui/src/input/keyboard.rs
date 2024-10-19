@@ -8,6 +8,7 @@ use leptos_use::{
     use_event_listener,
     use_window,
 };
+use linear_map::set::LinearSet;
 use tokio::sync::broadcast;
 
 #[derive(Debug)]
@@ -81,6 +82,24 @@ impl KeyboardEvent {
             repeat: event.repeat(),
             modifiers: KeyModifiers::from_websys(event),
         })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct KeyboardInputState {
+    pub keys_pressed: LinearSet<KeyCode>,
+}
+
+impl KeyboardInputState {
+    pub fn push(&mut self, event: &KeyboardEvent) {
+        match event {
+            KeyboardEvent::KeyUp { code, .. } => {
+                self.keys_pressed.remove(code);
+            }
+            KeyboardEvent::KeyDown { code, .. } => {
+                self.keys_pressed.insert(*code);
+            }
+        }
     }
 }
 

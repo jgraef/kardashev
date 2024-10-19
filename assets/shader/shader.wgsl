@@ -1,6 +1,8 @@
 struct CameraUniform {
     view_projection: mat4x4<f32>,
     view_position: vec3<f32>,
+    time: f32,
+    aspect: f32,
 };
 
 struct LightUniform {
@@ -37,7 +39,12 @@ struct VertexOutput {
     @location(0) tex_coords: vec2<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) world_normal: vec3<f32>,
-};
+}
+
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+}
+
 
 @vertex
 fn vs_main(
@@ -99,7 +106,8 @@ var material_dissolve_sampler: sampler;
 
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragmentOutput {
+    var out: FragmentOutput;
     // todo: use the other material textures, if applicable
 
     let light_direction = normalize(light.position - in.world_position);
@@ -120,7 +128,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let color_rgb = (ambient_color + diffuse_color + specular_color) * diffuse_texture_color.xyz;
     //let color_rgb = specular_color;
-    let color_rgba = vec4<f32>(color_rgb, diffuse_texture_color.w);
+    out.color = vec4<f32>(color_rgb, diffuse_texture_color.w);
 
-    return color_rgba;
+    return out;
 }

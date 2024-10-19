@@ -1,8 +1,4 @@
-use std::{
-    future::Future,
-    pin::pin,
-    task::Poll,
-};
+use std::task::Poll;
 
 use hecs::Entity;
 use kardashev_style::style;
@@ -15,8 +11,11 @@ use leptos::{
     IntoView,
     StoredValue,
 };
-use nalgebra::Translation3;
-use tokio::sync::watch;
+use nalgebra::{
+    Translation3,
+    Vector3,
+};
+use tokio::sync::mpsc;
 
 use crate::{
     app::{
@@ -26,22 +25,7 @@ use crate::{
         },
         MainCamera,
     },
-    error::Error,
-    graphics::{
-        camera::{
-            ChangeCameraAspectRatio,
-            RenderTarget,
-        },
-        render_3d::Render3d,
-        transform::Transform,
-        Surface,
-    },
-    input::{
-        keyboard::KeyCode,
-        InputEvent,
-        InputState,
-    },
-    world::{
+    ecs::{
         plugin::{
             Plugin,
             RegisterPluginContext,
@@ -52,6 +36,32 @@ use crate::{
             SystemContext,
         },
     },
+    error::Error,
+    graphics::{
+        camera::{
+            CameraProjection,
+            ChangeCameraAspectRatio,
+            RenderTarget,
+        },
+        render_3d::{
+            CreateRender3dPipelineContext,
+            Render3dMeshesWithMaterial,
+            Render3dPass,
+            Render3dPipeline,
+            Render3dPipelineContext,
+        },
+        transform::Transform,
+        Surface,
+    },
+    input::{
+        keyboard::KeyboardInput,
+        mouse::{
+            MouseButton,
+            MouseEvent,
+        },
+        InputState,
+    },
+    universe::star::render::RenderStarPipeline,
 };
 
 #[style(path = "src/app/map.scss")]
@@ -60,36 +70,31 @@ struct Style;
 #[component]
 pub fn Map() -> impl IntoView {
     let camera_entity = store_value(None);
-    let (tx_input_state, rx_input_state) = watch::channel(InputState::default());
+    let (tx_mouse, rx_mouse) = mpsc::channel(128);
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
 
         let world = expect_context::<World>();
-        let render_target = RenderTarget::from_surface::<Render3d>(surface);
+        let render_target = RenderTarget::from_surface::<Render3dPass<MapPipeline>>(surface);
 
-        world.add_system(AttachCamera {
+        world.run_system(AttachCamera {
             render_target: Some(render_target),
-            controller: Some(MapCameraController {
-                input_state: rx_input_state,
-            }),
+            mouse_events: Some(rx_mouse),
             camera_entity,
         });
     };
 
     let on_event = move |event| {
-        tracing::debug!(?event);
-
         match event {
             WindowEvent::Mouse(mouse_event) => {
-                tx_input_state
-                    .send_modify(|input_state| input_state.push(&InputEvent::Mouse(mouse_event)));
+                let _ = tx_mouse.send(mouse_event);
             }
             WindowEvent::Resize { surface_size } => {
                 if let Some(camera_entity) = camera_entity.get_value() {
                     let world = expect_context::<World>();
                     let aspect = (surface_size.width as f32) / (surface_size.height as f32);
-                    world.add_system(ChangeCameraAspectRatio {
+                    world.run_system(ChangeCameraAspectRatio {
                         camera_entity,
                         aspect,
                     });
@@ -103,7 +108,7 @@ pub fn Map() -> impl IntoView {
         camera_entity.update_value(|camera_entity| {
             if let Some(camera_entity) = *camera_entity {
                 let world = expect_context::<World>();
-                world.add_system(DetachCamera { camera_entity });
+                world.run_system(DetachCamera { camera_entity });
             }
             *camera_entity = None;
         });
@@ -115,10 +120,30 @@ pub fn Map() -> impl IntoView {
 }
 
 #[derive(Debug)]
+struct MapPipeline {
+    meshes_with_material: Render3dMeshesWithMaterial,
+    stars: RenderStarPipeline,
+}
+
+impl Render3dPipeline for MapPipeline {
+    fn create_pipeline(pipeline_context: &CreateRender3dPipelineContext) -> Self {
+        Self {
+            meshes_with_material: Render3dMeshesWithMaterial::create_pipeline(pipeline_context),
+            stars: RenderStarPipeline::create_pipeline(pipeline_context),
+        }
+    }
+
+    fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
+        self.meshes_with_material.render(pipeline_context);
+        self.stars.render(pipeline_context);
+    }
+}
+
+#[derive(Debug)]
 struct AttachCamera {
     camera_entity: StoredValue<Option<Entity>>,
     render_target: Option<RenderTarget>,
-    controller: Option<MapCameraController>,
+    mouse_events: Option<mpsc::Receiver<MouseEvent>>,
 }
 
 impl System for AttachCamera {
@@ -137,10 +162,21 @@ impl System for AttachCamera {
             .render_target
             .take()
             .expect("system was not supposed to be polled again");
-        let controller = self
-            .controller
+
+        let keyboard_input = system_context
+            .resources
+            .get::<KeyboardInput>()
+            .expect("no keyboard input")
+            .clone();
+        let mouse_input = self
+            .mouse_events
             .take()
             .expect("system was not supposed to be polled again");
+        let controller = MapCameraController {
+            mouse_input,
+            keyboard_input,
+            state: Default::default(),
+        };
 
         if let Some(MainCamera { camera_entity }) = system_context.resources.get::<MainCamera>() {
             let _ = system_context
@@ -171,20 +207,20 @@ impl System for DetachCamera {
     ) -> Poll<Result<(), Self::Error>> {
         let _ = system_context
             .world
-            .remove_one::<RenderTarget>(self.camera_entity);
+            .remove::<(RenderTarget, MapCameraController)>(self.camera_entity);
         Poll::Ready(Ok(()))
     }
 }
 
 #[derive(Debug)]
 struct MapCameraController {
-    input_state: watch::Receiver<InputState>,
+    mouse_input: mpsc::Receiver<MouseEvent>,
+    keyboard_input: KeyboardInput,
+    state: InputState,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct MapCameraControllerSystem {
-    step_size: f32,
-}
+struct MapCameraControllerSystem;
 
 impl System for MapCameraControllerSystem {
     type Error = Error;
@@ -199,57 +235,44 @@ impl System for MapCameraControllerSystem {
         system_context: &mut SystemContext<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         // if at least one future is pending
-        #[allow(unused_assignments)]
         let mut pending = false;
 
         // todo: listen for component-added events
-        // for now we'll pretend the events thingy exists, and is always pending
-        pending = true;
 
-        let query = system_context
-            .world
-            .query_mut::<(&mut MapCameraController, &mut Transform)>();
+        let query =
+            system_context
+                .world
+                .query_mut::<(&mut MapCameraController, &mut Transform, &CameraProjection)>();
 
-        for (entity, (controller, transform)) in query {
-            {
-                // `changed` is cancel-safe, so we can do this.
-                // but this needs to be in a block, otherwise rustc will complain that
-                // `controller.input_state` is still borrowed by the future.
-                match pin!(controller.input_state.changed()).poll(task_context) {
-                    Poll::Pending => {
-                        pending = true;
-                        continue;
-                    }
-                    Poll::Ready(Ok(())) => {
-                        // the input state changed
-                    }
-                    Poll::Ready(Err(_)) => {
-                        // sender dropped, remove the component
-                        tracing::debug!(?entity, "input state sender dropped. removing map camera controller from entity");
-                        system_context
-                            .command_buffer
-                            .remove_one::<MapCameraController>(entity);
-                        continue;
+        for (_entity, (controller, camera_transform, camera_projection)) in query {
+            match controller.mouse_input.poll_recv(task_context) {
+                Poll::Ready(Some(event)) => {
+                    tracing::debug!(?event);
+                    controller.state.mouse.push(&event);
+
+                    if let MouseEvent::Move { position: _, delta } = event {
+                        if controller.state.mouse.buttons.is_down(MouseButton::Left) {
+                            let transform = camera_projection.projection_matrix.as_projective()
+                                * camera_transform.model_matrix;
+                            //let world_position =
+                            // transform.inverse_transform_point(&Point3::new(position.x,
+                            // position.y, controller.z_mouse));
+                            let world_delta = transform
+                                .inverse_transform_vector(&Vector3::new(delta.x, delta.y, 0.0));
+                            camera_transform
+                                .model_matrix
+                                .append_translation_mut(&Translation3::from(world_delta));
+                        }
+
+                        if controller.state.mouse.buttons.is_down(MouseButton::Right) {
+                            // todo
+                        }
                     }
                 }
-            }
-
-            let input_state = controller.input_state.borrow_and_update();
-            tracing::debug!(?input_state);
-
-            for key_code in &input_state.keys_pressed {
-                let movement_matrix = match *key_code {
-                    KeyCode::KeyW => Translation3::new(0.0, self.step_size, 0.0),
-                    KeyCode::KeyA => Translation3::new(-self.step_size, 0.0, 0.0),
-                    KeyCode::KeyS => Translation3::new(0.0, -self.step_size, 0.0),
-                    KeyCode::KeyD => Translation3::new(-self.step_size, 0.0, 0.0),
-                    KeyCode::KeyR => Translation3::new(0.0, 0.0, -self.step_size),
-                    KeyCode::KeyF => Translation3::new(0.0, 0.0, self.step_size),
-                    _ => {
-                        continue;
-                    }
-                };
-                transform.model_matrix = movement_matrix * transform.model_matrix;
+                Poll::Ready(None) => {}
+                Poll::Pending => {
+                    pending = true;
+                }
             }
         }
 
@@ -269,8 +292,6 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn register(self, context: RegisterPluginContext) {
-        context
-            .schedule
-            .add_system(MapCameraControllerSystem { step_size: 0.5 });
+        context.schedule.add_system(MapCameraControllerSystem);
     }
 }

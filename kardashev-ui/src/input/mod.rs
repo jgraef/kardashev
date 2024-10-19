@@ -1,27 +1,24 @@
 pub mod keyboard;
 pub mod mouse;
 
-use std::collections::HashSet;
-
-use nalgebra::{
-    Point2,
-    Vector3,
-};
+use nalgebra::Point2;
 
 use self::{
     keyboard::{
-        KeyCode,
         KeyboardEvent,
         KeyboardInput,
     },
-    mouse::{
-        MouseButton,
-        MouseEvent,
-    },
+    mouse::MouseEvent,
 };
-use crate::world::plugin::{
-    Plugin,
-    RegisterPluginContext,
+use crate::{
+    ecs::plugin::{
+        Plugin,
+        RegisterPluginContext,
+    },
+    input::{
+        keyboard::KeyboardInputState,
+        mouse::MouseInputState,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -36,37 +33,15 @@ fn mouse_position_from_websys(event: &web_sys::MouseEvent) -> Point2<f32> {
 
 #[derive(Clone, Debug, Default)]
 pub struct InputState {
-    pub keys_pressed: HashSet<KeyCode>,
-    pub mouse_buttons_pressed: HashSet<MouseButton>,
-    pub mouse_position: Option<Point2<f32>>,
-    pub absolute_scroll: Vector3<f32>,
+    pub keyboard: KeyboardInputState,
+    pub mouse: MouseInputState,
 }
 
 impl InputState {
     pub fn push(&mut self, event: &InputEvent) {
         match event {
-            InputEvent::Mouse(MouseEvent::ButtonUp { button, .. }) => {
-                self.mouse_buttons_pressed.remove(button);
-            }
-            InputEvent::Mouse(MouseEvent::ButtonDown { button, .. }) => {
-                self.mouse_buttons_pressed.insert(*button);
-            }
-            InputEvent::Mouse(MouseEvent::Move { position }) => {
-                self.mouse_position = Some(*position);
-            }
-            InputEvent::Mouse(MouseEvent::Enter) => {}
-            InputEvent::Mouse(MouseEvent::Leave) => {
-                self.mouse_position = None;
-            }
-            InputEvent::Mouse(MouseEvent::Wheel { delta, .. }) => {
-                self.absolute_scroll += delta;
-            }
-            InputEvent::Keyboard(KeyboardEvent::KeyUp { code, .. }) => {
-                self.keys_pressed.remove(code);
-            }
-            InputEvent::Keyboard(KeyboardEvent::KeyDown { code, .. }) => {
-                self.keys_pressed.insert(*code);
-            }
+            InputEvent::Keyboard(event) => self.keyboard.push(event),
+            InputEvent::Mouse(event) => self.mouse.push(event),
         }
     }
 }

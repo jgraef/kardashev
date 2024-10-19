@@ -13,14 +13,14 @@ use serde::{
 };
 
 use crate::{
-    utils::futures::Interval,
-    world::{
+    ecs::{
         resource::ResourceNotFound,
         system::{
             System,
             SystemContext,
         },
     },
+    utils::time::Interval,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -65,7 +65,7 @@ impl<T, S> EachTick<T, S> {
 }
 
 impl<T: TickRate, S: System> System for EachTick<T, S> {
-    type Error = TickSystemError<S::Error>;
+    type Error = EachTickError<S::Error>;
 
     fn label(&self) -> &'static str {
         self.system.label()
@@ -90,7 +90,7 @@ impl<T: TickRate, S: System> System for EachTick<T, S> {
                 }
                 EachTickState::PollSystem { tick } => {
                     ready!(self.system.poll_system(task_context, system_context))
-                        .map_err(TickSystemError::System)?;
+                        .map_err(EachTickError::System)?;
                     self.previously_seen_tick = Some(tick);
                     self.state = EachTickState::PollTick;
                 }
@@ -100,7 +100,7 @@ impl<T: TickRate, S: System> System for EachTick<T, S> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TickSystemError<E> {
+pub enum EachTickError<E> {
     #[error("tick system error: inner system error")]
     System(#[source] E),
     #[error("tick system error: resource not found")]

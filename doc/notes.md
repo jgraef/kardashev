@@ -6,3 +6,11 @@
  - generating texture atlas: `guillotiere = "0.6.2"`
  - [Star catalogs](https://projectrho.com/public_html/starmaps/catalogues.php)
  - [Proper star names](https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt)
+ - WebGPU:
+  - https://webgpufundamentals.org/webgpu/lessons/webgpu-wgsl.html
+  - https://sotrh.github.io/learn-wgpu/
+  - [Coordinate systems](https://www.w3.org/TR/webgpu/#coordinate-systems)
+  - [Blinn-Phong](https://en.wikipedia.org/wiki/Blinn%E2%80%93Phong_reflection_model)
+  - [baryon pbr render pass](https://github.com/kvark/baryon/blob/main/src/pass/real.rs#L79)
+  - [impostors](https://paroj.github.io/gltut/Illumination/Tutorial%2013.html)
+ - Barnes-Hut algorithm for n-body systems?

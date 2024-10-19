@@ -9,11 +9,7 @@ use nalgebra::{
 };
 
 use crate::{
-    graphics::{
-        Error,
-        UpdateTick,
-    },
-    world::{
+    ecs::{
         system::{
             System,
             SystemContext,
@@ -22,6 +18,10 @@ use crate::{
             Tick,
             TickRate,
         },
+    },
+    graphics::{
+        Error,
+        UpdateTick,
     },
 };
 
@@ -44,6 +44,16 @@ impl Transform {
 pub struct GlobalTransform {
     pub model_matrix: Similarity3<f32>,
     pub tick_last_updated: Option<Tick>,
+}
+
+impl GlobalTransform {
+    pub fn as_homogeneous_matrix_array(&self) -> [f32; 16] {
+        self.model_matrix
+            .to_homogeneous()
+            .as_slice()
+            .try_into()
+            .expect("convert model matrix to array")
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

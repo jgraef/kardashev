@@ -4,20 +4,20 @@ use std::{
 };
 
 use crate::{
-    graphics::{
-        camera::RenderTarget,
-        Backend,
-        Error,
-        Surface,
-        SurfaceSize,
-    },
-    world::{
+    ecs::{
         resource::Resources,
         system::{
             System,
             SystemContext,
         },
         Label,
+    },
+    graphics::{
+        camera::RenderTarget,
+        Backend,
+        Error,
+        Surface,
+        SurfaceSize,
     },
 };
 
@@ -45,17 +45,15 @@ impl System for RenderingSystem {
 
             if let Some(surface_size) = render_target.surface_size_listener.poll() {
                 tracing::debug!(?label, ?surface_size, "surface resized");
-                render_target
-                    .render_pass
-                    .resize(&render_target.backend, surface_size);
+                render_target.resize(surface_size);
             }
 
             if !render_target.is_visible() {
-                tracing::trace!(?label, "skipping render target (not visible)");
+                tracing::debug!(?label, "skipping render target (not visible)");
                 continue;
             }
 
-            tracing::trace!(?label, "rendering render target");
+            tracing::trace!(?label, "rendering frame");
 
             let target_texture = render_target
                 .surface
@@ -89,7 +87,7 @@ impl System for RenderingSystem {
     }
 }
 
-pub trait RenderPass: Debug {
+pub trait RenderPass {
     fn render(&mut self, render_pass_context: &mut RenderPassContext);
 
     fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize);

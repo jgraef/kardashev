@@ -42,7 +42,6 @@ reqwest = { version = "0.12.7", features = ["json"] }
 linear-map = { version = "1.2.0", features = ["serde", "serde_impl"] }
 parking_lot = "0.12.3"
 raw-window-handle = "0.6.2"
-gloo-timers = { version = "0.3.0", features = ["futures"] }
 codee = { version = "0.2.0", features = ["json_serde"] }
 bitflags = "2.6.0"
 rmp-serde = "1.3.0"
@@ -56,6 +55,8 @@ gloo-file = "0.3.0"
 wasm-streams = "0.4.1"
 tokio-util = { version = "0.7.12", features = ["compat", "io"] }
 arrayvec = "0.7.6"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+web-time = "1.1.0"
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

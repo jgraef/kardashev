@@ -3,15 +3,14 @@ use std::task::{
     Poll,
 };
 
-use hecs::Entity;
+use hecs::{Entity, NoSuchEntity, Query, QueryOne, QueryOneError};
 use tokio::sync::{
     mpsc,
     oneshot,
 };
 
 use crate::{
-    utils::futures::spawn_local_and_handle_error,
-    world::{
+    ecs::{
         resource::Resources,
         schedule::Schedule,
         system::{
@@ -19,15 +18,17 @@ use crate::{
             System,
             SystemContext,
         },
+        world::World,
         Error,
         Plugin,
         RegisterPluginContext,
     },
+    utils::futures::spawn_local_and_handle_error,
 };
 
 #[derive(Default)]
 pub struct Builder {
-    world: hecs::World,
+    world: World,
     resources: Resources,
     startup_schedule: Schedule,
     schedule: Schedule,
@@ -75,11 +76,11 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> World {
+    pub fn build(self) -> WorldServer {
         let (tx_command, rx_command) = mpsc::unbounded_channel();
 
         spawn_local_and_handle_error(async move {
-            let server = WorldServer {
+            let server = Reactor {
                 rx_command,
                 world: self.world,
                 resources: self.resources,
@@ -89,16 +90,16 @@ impl Builder {
             server.run().await
         });
 
-        World { tx_command }
+        WorldServer { tx_command }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct World {
+pub struct WorldServer {
     tx_command: mpsc::UnboundedSender<Command>,
 }
 
-impl World {
+impl WorldServer {
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -107,11 +108,13 @@ impl World {
         self.tx_command.send(command).expect("world server died");
     }
 
+    /// Submits an ECS command buffer to be executed
     pub fn submit(&self, command_buffer: hecs::CommandBuffer) {
         self.send_command(Command::SubmitCommandBuffer { command_buffer })
     }
 
-    pub async fn spawn(&self, bundle: impl hecs::DynamicBundle) -> hecs::Entity {
+    /// Spawns an entity
+    pub async fn spawn_entity(&self, bundle: impl hecs::DynamicBundle) -> hecs::Entity {
         let mut builder = hecs::EntityBuilder::new();
         builder.add_bundle(bundle);
         let (tx_entity, rx_entity) = oneshot::channel();
@@ -119,14 +122,58 @@ impl World {
         rx_entity.await.unwrap()
     }
 
-    pub fn despawn(&self, entity: Entity) {
+    /// Despawns an entity
+    pub fn despawn_entity(&self, entity: Entity) {
         self.send_command(Command::DespawnEntity { entity });
     }
 
-    pub fn add_system(&self, system: impl System) {
+    /// Spawns a system.
+    ///
+    /// This system will be run in the system schedule.
+    pub fn spawn_system(&self, system: impl System) {
         self.send_command(Command::AddSystem {
             system: system.dyn_system(),
         });
+    }
+
+    /// Runs a system.
+    ///
+    /// This system will be executed immediately. No other systems are executed,
+    /// or other commands handles until this system finishes.
+    pub fn run_system_now(&self, system: impl System) {
+        self.send_command(Command::RunSystem {
+            system: system.dyn_system(),
+        })
+    }
+
+    /// Runs a closure once with system context.
+    pub async fn run<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut SystemContext) -> R + Send + Sync + 'static,
+        R: Send + Sync + 'static,
+    {
+        let (tx_result, rx_result) = oneshot::channel();
+        self.send_command(Command::RunOnce {
+            f: Box::new(move |system_context| {
+                let result = f(system_context);
+                let _ = tx_result.send(result);
+            }),
+        });
+        rx_result
+            .await
+            .expect("world server died while running the run-once")
+    }
+
+    pub async fn run_on_entity<F, R, Q>(&self, entity: Entity, f: F) -> Result<R, QueryOneError>
+        where
+            F: for<'q> FnOnce(Q::Item<'q>) -> R + Send + Sync + 'static,
+            R: Send + Sync + 'static,
+            Q: Query,
+    {
+        self.run(move |system_context| {
+            let query = system_context.world.query_one_mut::<Q>(entity)?;
+            Ok(f(query))
+        }).await
     }
 }
 
@@ -144,17 +191,23 @@ enum Command {
     AddSystem {
         system: DynSystem,
     },
+    RunSystem {
+        system: DynSystem,
+    },
+    RunOnce {
+        f: Box<dyn FnOnce(&mut SystemContext)>,
+    },
 }
 
-struct WorldServer {
+struct Reactor {
     rx_command: mpsc::UnboundedReceiver<Command>,
-    world: hecs::World,
+    world: World,
     resources: Resources,
     startup_schedule: Schedule,
     schedule: Schedule,
 }
 
-impl WorldServer {
+impl Reactor {
     async fn run(mut self) -> Result<(), Error> {
         /// polls the HandleCommandsSystem first, then the given schedule
         fn poll_systems(
@@ -206,6 +259,7 @@ impl WorldServer {
 
         let mut handle_commands_system = HandleCommandsSystem {
             rx_command: self.rx_command,
+            running_system: None,
         };
 
         tracing::debug!("running startup systems");
@@ -232,6 +286,7 @@ impl WorldServer {
 
 struct HandleCommandsSystem {
     rx_command: mpsc::UnboundedReceiver<Command>,
+    running_system: Option<DynSystem>,
 }
 
 impl System for HandleCommandsSystem {
@@ -246,24 +301,47 @@ impl System for HandleCommandsSystem {
         task_context: &mut std::task::Context<'_>,
         system_context: &mut SystemContext<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        while let Some(command) = ready!(self.rx_command.poll_recv(task_context)) {
-            match command {
-                Command::SubmitCommandBuffer { mut command_buffer } => {
-                    command_buffer.run_on(&mut system_context.world);
+        loop {
+            if let Some(running_system) = &mut self.running_system {
+                ready!(running_system.poll_system(task_context, system_context)).map_err(
+                    |error| {
+                        Error::System {
+                            system: running_system.label(),
+                            error,
+                        }
+                    },
+                )?;
+                self.running_system = None;
+            }
+
+            if let Some(command) = ready!(self.rx_command.poll_recv(task_context)) {
+                match command {
+                    Command::SubmitCommandBuffer { mut command_buffer } => {
+                        command_buffer.run_on(&mut system_context.world);
+                    }
+                    Command::SpawnEntity {
+                        mut builder,
+                        tx_entity,
+                    } => {
+                        let entity = system_context.world.spawn(builder.build());
+                        let _ = tx_entity.send(entity);
+                    }
+                    Command::DespawnEntity { entity } => {
+                        let _ = system_context.world.despawn(entity);
+                    }
+                    Command::AddSystem { system } => {
+                        system_context.add_system(system);
+                    }
+                    Command::RunSystem { system } => {
+                        self.running_system = Some(system);
+                    }
+                    Command::RunOnce { f } => {
+                        f(system_context);
+                    }
                 }
-                Command::SpawnEntity {
-                    mut builder,
-                    tx_entity,
-                } => {
-                    let entity = system_context.world.spawn(builder.build());
-                    let _ = tx_entity.send(entity);
-                }
-                Command::DespawnEntity { entity } => {
-                    let _ = system_context.world.despawn(entity);
-                }
-                Command::AddSystem { system } => {
-                    system_context.add_system(system);
-                }
+            }
+            else {
+                break;
             }
         }
 

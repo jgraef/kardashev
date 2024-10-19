@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     sync::Arc,
     task::Poll,
 };
@@ -11,22 +12,24 @@ use palette::{
 };
 
 use crate::{
+    ecs::system::{
+        System,
+        SystemContext,
+    },
     error::Error,
     graphics::{
         backend::Backend,
         render_frame::{
             CreateRenderPass,
             RenderPass,
+            RenderPassContext,
         },
         Surface,
+        SurfaceSize,
         SurfaceSizeListener,
         SurfaceVisibilityListener,
     },
     utils::thread_local_cell::ThreadLocalCell,
-    world::system::{
-        System,
-        SystemContext,
-    },
 };
 
 #[derive(Debug)]
@@ -120,10 +123,11 @@ impl RenderTarget {
         Self {
             inner: ThreadLocalCell::new(RenderTargetInner {
                 surface: surface.surface.clone(),
+                surface_configuration: surface.surface_configuration.clone(),
                 surface_size_listener: surface.size_listener(),
                 surface_visibility_listener: surface.visibility_listener(),
                 backend: surface.backend.clone(),
-                render_pass: Box::new(R::create_render_pass(surface)),
+                render_pass: DynRenderPass::new(R::create_render_pass(surface)),
             }),
         }
     }
@@ -132,14 +136,52 @@ impl RenderTarget {
 #[derive(Debug)]
 pub(super) struct RenderTargetInner {
     pub surface: Arc<wgpu::Surface<'static>>,
+    pub surface_configuration: wgpu::SurfaceConfiguration,
     pub surface_size_listener: SurfaceSizeListener,
     pub surface_visibility_listener: SurfaceVisibilityListener,
     pub backend: Backend,
-    pub render_pass: Box<dyn RenderPass>,
+    pub render_pass: DynRenderPass,
 }
 
 impl RenderTargetInner {
     pub fn is_visible(&self) -> bool {
         self.surface_visibility_listener.is_visible()
+    }
+
+    pub fn resize(&mut self, surface_size: SurfaceSize) {
+        self.surface_configuration.width = surface_size.width;
+        self.surface_configuration.height = surface_size.height;
+        self.surface
+            .configure(&self.backend.device, &self.surface_configuration);
+
+        self.render_pass.resize(&self.backend, surface_size);
+    }
+}
+
+pub struct DynRenderPass {
+    inner: Box<dyn RenderPass>,
+}
+
+impl DynRenderPass {
+    pub fn new(render_pass: impl RenderPass + 'static) -> Self {
+        DynRenderPass {
+            inner: Box::new(render_pass),
+        }
+    }
+}
+
+impl Debug for DynRenderPass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoxedRenderPass").finish_non_exhaustive()
+    }
+}
+
+impl RenderPass for DynRenderPass {
+    fn render(&mut self, render_pass_context: &mut RenderPassContext) {
+        self.inner.render(render_pass_context);
+    }
+
+    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
+        self.inner.resize(backend, surface_size);
     }
 }

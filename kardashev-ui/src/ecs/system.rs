@@ -5,13 +5,13 @@ use std::{
 };
 
 use super::Resources;
-use crate::world::tick::{
+use crate::ecs::{tick::{
     EachTick,
     TickRate,
-};
+}, world::World};
 
 pub struct SystemContext<'c> {
-    pub world: &'c mut hecs::World,
+    pub world: &'c mut World,
     pub resources: &'c mut Resources,
     pub command_buffer: hecs::CommandBuffer,
     pub add_systems: Vec<DynSystem>,

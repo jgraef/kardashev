@@ -5,13 +5,11 @@ use std::{
         Context,
         Poll,
     },
-    time::Duration,
 };
 
 use futures::{
     pin_mut,
     FutureExt,
-    StreamExt,
 };
 use tokio::sync::{
     oneshot,
@@ -128,68 +126,4 @@ pub fn spawn_local_and_handle_error<
             }
         }
     }));
-}
-
-#[derive(Debug)]
-pub struct Interval {
-    inner: gloo_timers::future::IntervalStream,
-}
-
-impl Interval {
-    fn new(period: Duration) -> Self {
-        let millis = period.as_millis().try_into().expect("period too long");
-        Self {
-            inner: gloo_timers::future::IntervalStream::new(millis),
-        }
-    }
-
-    pub async fn tick(&mut self) {
-        self.inner.next().await.expect("interval stream finished");
-    }
-
-    pub fn poll_tick(&mut self, cx: &mut Context) -> Poll<()> {
-        self.inner
-            .poll_next_unpin(cx)
-            .map(|option| option.expect("interval stream finished"))
-    }
-}
-
-/// # Panics
-///
-/// Panics if the duration is too long. This is the case if the period in
-/// milliseconds can not be stored in a 32bit unsigned integer. This is the case
-/// for any period longer than 4294967 seconds, or about 50 days.
-pub fn interval(period: Duration) -> Interval {
-    Interval::new(period)
-}
-
-#[derive(Debug)]
-pub struct Sleep {
-    inner: gloo_timers::future::TimeoutFuture,
-}
-
-impl Sleep {
-    fn new(duration: Duration) -> Sleep {
-        let millis = duration.as_millis().try_into().expect("period too long");
-        Self {
-            inner: gloo_timers::future::TimeoutFuture::new(millis),
-        }
-    }
-}
-
-impl Future for Sleep {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.inner.poll_unpin(cx)
-    }
-}
-
-/// # Panics
-///
-/// Panics if the duration is too long. This is the case if the period in
-/// milliseconds can not be stored in a 32bit unsigned integer. This is the case
-/// for any period longer than 4294967 seconds, or about 50 days.
-pub fn sleep(duration: Duration) -> Sleep {
-    Sleep::new(duration)
 }

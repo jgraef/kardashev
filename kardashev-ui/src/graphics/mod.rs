@@ -4,7 +4,6 @@ pub mod draw_batch;
 pub mod material;
 pub mod mesh;
 pub mod model;
-pub mod pipeline;
 pub mod render_3d;
 pub mod render_frame;
 pub mod texture;
@@ -38,6 +37,18 @@ use web_sys::HtmlCanvasElement;
 
 use crate::{
     assets::system::AssetTypeRegistry,
+    ecs::{
+        plugin::{
+            Plugin,
+            RegisterPluginContext,
+        },
+        system::SystemExt,
+        tick::{
+            FixedTick,
+            Tick,
+            TickRate,
+        },
+    },
     graphics::{
         backend::{
             Backend,
@@ -50,23 +61,9 @@ use crate::{
         utils::GpuResourceCache,
     },
     utils::{
-        futures::{
-            interval,
-            spawn_local_and_handle_error,
-        },
+        futures::spawn_local_and_handle_error,
         thread_local_cell::ThreadLocalError,
-    },
-    world::{
-        plugin::{
-            Plugin,
-            RegisterPluginContext,
-        },
-        system::SystemExt,
-        tick::{
-            FixedTick,
-            Tick,
-            TickRate,
-        },
+        time::interval,
     },
 };
 
@@ -392,12 +389,7 @@ pub struct Surface {
 
 impl Surface {
     pub fn resize(&mut self, surface_size: SurfaceSize) {
-        self.surface_configuration.width = surface_size.width;
-        self.surface_configuration.height = surface_size.height;
-        tracing::info!(backend = ?self.backend.id, ?surface_size, "reconfiguring surface");
         let _ = self.tx_resize.send(surface_size);
-        self.surface
-            .configure(&self.backend.device, &self.surface_configuration);
     }
 
     pub fn set_visible(&mut self, visible: bool) {
@@ -505,7 +497,7 @@ impl TickRate for RenderTick {
         &mut self,
         task_context: &mut std::task::Context<'_>,
         f: F,
-    ) -> std::task::Poll<crate::world::tick::Tick> {
+    ) -> std::task::Poll<Tick> {
         self.fixed_tick.poll_for(task_context, f)
     }
 }
@@ -532,7 +524,7 @@ impl TickRate for UpdateTick {
         &mut self,
         task_context: &mut std::task::Context<'_>,
         f: F,
-    ) -> std::task::Poll<crate::world::tick::Tick> {
+    ) -> std::task::Poll<Tick> {
         self.fixed_tick.poll_for(task_context, f)
     }
 }

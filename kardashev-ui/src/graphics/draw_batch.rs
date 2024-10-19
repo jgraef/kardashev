@@ -16,17 +16,16 @@ use crate::{
             GpuMeshId,
         },
         render_3d::Instance,
+        utils::InstanceBuffer,
     },
     utils::thread_local_cell::ThreadLocalCell,
 };
 
 #[derive(Debug)]
 pub struct DrawBatcher {
-    instance_buffer: wgpu::Buffer,
-    instance_buffer_size: usize,
+    instance_buffer: InstanceBuffer<Instance>,
     entries: HashMap<DrawBatchKey, DrawBatchEntry>,
     reuse_instance_vecs: Vec<Vec<Instance>>,
-    instances: Vec<Instance>,
     batches: Vec<DrawBatch>,
 }
 
@@ -34,14 +33,10 @@ impl DrawBatcher {
     const INITIAL_BUFFER_SIZE: usize = 1024;
 
     pub fn new(backend: &Backend) -> Self {
-        let instance_buffer = create_instance_buffer(backend, Self::INITIAL_BUFFER_SIZE);
-
         Self {
-            instance_buffer,
-            instance_buffer_size: Self::INITIAL_BUFFER_SIZE,
+            instance_buffer: InstanceBuffer::new(backend, Self::INITIAL_BUFFER_SIZE),
             entries: HashMap::with_capacity(Self::INITIAL_BUFFER_SIZE),
             reuse_instance_vecs: vec![],
-            instances: Vec::with_capacity(Self::INITIAL_BUFFER_SIZE),
             batches: vec![],
         }
     }
@@ -49,9 +44,9 @@ impl DrawBatcher {
     pub fn draw(&mut self, backend: &Backend, render_pass: &mut wgpu::RenderPass) {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
-            let start_index = self.instances.len() as u32;
-            self.instances.extend(entry.instances.drain(..));
-            let end_index = self.instances.len() as u32;
+            let start_index = self.instance_buffer.len() as u32;
+            self.instance_buffer.extend(entry.instances.drain(..));
+            let end_index = self.instance_buffer.len() as u32;
 
             self.batches.push(DrawBatch {
                 range: start_index..end_index,
@@ -63,38 +58,29 @@ impl DrawBatcher {
         }
 
         tracing::trace!(
-            num_instances = self.instances.len(),
+            num_instances = self.instance_buffer.len(),
             num_batches = self.batches.len(),
             "drawing batched"
         );
 
-        // resize buffer if needed
-        if self.instances.len() > self.instance_buffer_size {
-            let new_size = self.instances.len().max(self.instance_buffer_size * 2);
-            self.instance_buffer = create_instance_buffer(backend, new_size);
-            self.instance_buffer_size = new_size;
-        }
+        if self.batches.len() > 0 {
+            // write instance data to gpu
+            self.instance_buffer.upload_and_clear(backend);
 
-        // write instance data to gpu
-        backend.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
-        self.instances.clear();
+            // render batches
+            for batch in self.batches.drain(..) {
+                tracing::trace!(?batch.range, "drawing batch");
 
-        // render batches
-        for batch in self.batches.drain(..) {
-            tracing::trace!(?batch.range, "drawing batch");
+                let mesh = batch.mesh.get();
+                let material = batch.material.get();
 
-            let mesh = batch.mesh.get();
-            let material = batch.material.get();
-
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_bind_group(0, &material.bind_group, &[]);
-            render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
+                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.set_bind_group(0, &material.bind_group, &[]);
+                render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
+            }
         }
     }
 

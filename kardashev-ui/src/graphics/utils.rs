@@ -1,5 +1,10 @@
-use std::sync::Arc;
+use std::{
+    marker::PhantomData,
+    ops::RangeBounds,
+    sync::Arc,
+};
 
+use bytemuck::Pod;
 use kardashev_protocol::assets::{
     AssetId,
     Vertex,
@@ -7,7 +12,10 @@ use kardashev_protocol::assets::{
 use palette::Srgba;
 
 use crate::{
-    graphics::backend::BackendId,
+    graphics::backend::{
+        Backend,
+        BackendId,
+    },
     utils::any_cache::AnyArcCache,
 };
 
@@ -107,5 +115,128 @@ impl GpuResourceCache {
         F: FnOnce() -> Arc<T>,
     {
         self.inner.get_or_insert((backend_id, asset_id), insert)
+    }
+}
+
+#[derive(Debug)]
+pub struct ResizableVertexBuffer<T> {
+    buffer: wgpu::Buffer,
+    capacity: usize,
+    _instance_type: PhantomData<T>,
+}
+
+impl<T> ResizableVertexBuffer<T> {
+    pub fn new(backend: &Backend, initial_capacity: usize) -> Self {
+        let buffer = Self::create_instance_buffer(backend, initial_capacity);
+        Self {
+            buffer,
+            capacity: initial_capacity,
+            _instance_type: PhantomData,
+        }
+    }
+
+    /// Allocates a new buffer such that it can hold `capacity` elements.
+    ///
+    /// If `capacity` is not greater than the current buffer's capacity, this
+    /// does nothing.
+    ///
+    /// This does **not** copy the contents to the new buffer.
+    ///
+    /// You can also just call [`Self::write`] with your data, and it'll grow
+    /// the buffer as necessary.
+    pub fn grow(&mut self, backend: &Backend, capacity: usize) {
+        if capacity > self.capacity {
+            let capacity = capacity.max(self.capacity * 2);
+            self.buffer = Self::create_instance_buffer(backend, capacity);
+            self.capacity = capacity;
+        }
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+
+    pub fn slice(&self, bounds: impl RangeBounds<wgpu::BufferAddress>) -> wgpu::BufferSlice<'_> {
+        self.buffer.slice(bounds)
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn create_instance_buffer(backend: &Backend, capacity: usize) -> wgpu::Buffer {
+        tracing::trace!(capacity, "allocating instance buffer");
+
+        backend.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance buffer"),
+            size: (capacity * std::mem::size_of::<T>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+}
+
+impl<T: Pod> ResizableVertexBuffer<T> {
+    pub fn write(&mut self, backend: &Backend, data: &[T]) {
+        self.grow(backend, data.len());
+        backend
+            .queue
+            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
+    }
+}
+
+/// A [`ResizableVertexBuffer`] with a buffer (in host memory) for staging -
+/// usually used for sending instances to the GPU.
+#[derive(Debug)]
+pub struct InstanceBuffer<T> {
+    buffer: ResizableVertexBuffer<T>,
+    staging: Vec<T>,
+}
+
+impl<T> InstanceBuffer<T> {
+    pub fn new(backend: &Backend, initial_capacity: usize) -> Self {
+        Self {
+            buffer: ResizableVertexBuffer::new(backend, initial_capacity),
+            staging: Vec::with_capacity(initial_capacity),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.staging.clear();
+    }
+
+    pub fn push(&mut self, instance: T) {
+        self.staging.push(instance);
+    }
+
+    pub fn extend(&mut self, instances: impl IntoIterator<Item = T>) {
+        self.staging.extend(instances);
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        self.buffer.buffer()
+    }
+
+    pub fn slice(&self, bounds: impl RangeBounds<wgpu::BufferAddress>) -> wgpu::BufferSlice<'_> {
+        self.buffer.slice(bounds)
+    }
+
+    pub fn len(&self) -> usize {
+        self.staging.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.staging.is_empty()
+    }
+}
+
+impl<T: Pod> InstanceBuffer<T> {
+    pub fn upload(&mut self, backend: &Backend) {
+        self.buffer.write(backend, &self.staging);
+    }
+
+    pub fn upload_and_clear(&mut self, backend: &Backend) {
+        self.upload(backend);
+        self.staging.clear();
     }
 }

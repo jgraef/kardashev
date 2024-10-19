@@ -19,10 +19,8 @@ use tokio::sync::{
 };
 
 use crate::utils::{
-    futures::{
-        interval,
-        spawn_local,
-    },
+    futures::spawn_local,
+    time::interval,
     web_fs::database::InodeId,
 };
 

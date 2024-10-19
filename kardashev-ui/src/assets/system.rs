@@ -13,8 +13,7 @@ use crate::{
         server::AssetServer,
         Error,
     },
-    graphics::UpdateTick,
-    world::{
+    ecs::{
         plugin::{
             Plugin,
             RegisterPluginContext,
@@ -25,6 +24,7 @@ use crate::{
             SystemExt,
         },
     },
+    graphics::UpdateTick,
 };
 
 /// [`System`] that queries [`Load<A>`s](Load), loads them, and attaches the

@@ -4,6 +4,7 @@ pub mod schedule;
 pub mod server;
 pub mod system;
 pub mod tick;
+pub mod world;
 
 use std::borrow::Cow;
 
@@ -14,7 +15,7 @@ use self::{
     },
     resource::Resources,
 };
-use crate::world::system::DynSystemError;
+use crate::ecs::system::DynSystemError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

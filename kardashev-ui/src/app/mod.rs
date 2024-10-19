@@ -27,6 +27,7 @@ use leptos_router::{
 use nalgebra::{
     Point3,
     Similarity3,
+    Vector3,
 };
 use palette::WithAlpha;
 
@@ -45,6 +46,14 @@ use crate::{
         load::Load,
         system::AssetsPlugin,
     },
+    ecs::{
+        server::World,
+        system::{
+            System,
+            SystemContext,
+        },
+        Label,
+    },
     error::Error,
     graphics::{
         camera::{
@@ -62,14 +71,7 @@ use crate::{
         RenderPlugin,
     },
     input::InputPlugin,
-    world::{
-        server::World,
-        system::{
-            System,
-            SystemContext,
-        },
-        Label,
-    },
+    universe::star::render::Star,
 };
 
 #[style(path = "src/app/app.scss")]
@@ -151,6 +153,20 @@ fn provide_world() {
                         Mesh::from(shape::Sphere::default().mesh().build()),
                         Load::<Material>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
                         Label::new_static("star"),
+                    ));
+
+                    let _star2 = system_context.world.spawn((
+                        Transform {
+                            model_matrix: Similarity3::new(
+                                Vector3::new(-3.0, 0.0, 0.0),
+                                Vector3::zeros(),
+                                1.0,
+                            ),
+                        },
+                        Star {
+                            color: palette::named::PINK.into_format().with_alpha(1.0),
+                        },
+                        Label::new_static("better star"),
                     ));
 
                     let camera_entity = system_context.world.spawn((
