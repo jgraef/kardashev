@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    task::Poll,
-};
+use std::fmt::Debug;
 
 use crate::{
     ecs::{
@@ -16,7 +13,6 @@ use crate::{
         camera::RenderTarget,
         Backend,
         Error,
-        Surface,
         SurfaceSize,
     },
 };
@@ -31,11 +27,7 @@ impl System for RenderingSystem {
         "rendering"
     }
 
-    fn poll_system(
-        &mut self,
-        _task_context: &mut std::task::Context<'_>,
-        system_context: &mut SystemContext<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
+    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
         let mut render_targets = system_context
             .world
             .query::<(&mut RenderTarget, Option<&Label>)>();
@@ -83,18 +75,27 @@ impl System for RenderingSystem {
             target_texture.present();
         }
 
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 }
 
-pub trait RenderPass {
-    fn render(&mut self, render_pass_context: &mut RenderPassContext);
+pub trait CreateRenderPass {
+    type RenderPass: RenderPass;
 
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize);
+    fn create_render_pass(self, context: &CreateRenderPassContext) -> Self::RenderPass;
 }
 
-pub trait CreateRenderPass: RenderPass {
-    fn create_render_pass(surface: &Surface) -> Self;
+#[derive(Clone, Copy, Debug)]
+pub struct CreateRenderPassContext<'a> {
+    pub backend: &'a Backend,
+    pub surface_size: SurfaceSize,
+    pub surface_format: wgpu::TextureFormat,
+}
+
+pub trait RenderPass {
+    fn render(&mut self, context: &mut RenderPassContext);
+
+    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize);
 }
 
 // todo: impl Debug
@@ -105,4 +106,32 @@ pub struct RenderPassContext<'a> {
     pub render_target_entity: hecs::Entity,
     pub world: &'a hecs::World,
     pub resources: &'a mut Resources,
+}
+
+pub struct DynRenderPass {
+    inner: Box<dyn RenderPass>,
+}
+
+impl DynRenderPass {
+    pub fn new(render_pass: impl RenderPass + 'static) -> Self {
+        DynRenderPass {
+            inner: Box::new(render_pass),
+        }
+    }
+}
+
+impl Debug for DynRenderPass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoxedRenderPass").finish_non_exhaustive()
+    }
+}
+
+impl RenderPass for DynRenderPass {
+    fn render(&mut self, render_pass_context: &mut RenderPassContext) {
+        self.inner.render(render_pass_context);
+    }
+
+    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
+        self.inner.resize(backend, surface_size);
+    }
 }

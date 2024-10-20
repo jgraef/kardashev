@@ -221,6 +221,7 @@ fn load_texture_to_gpu(
 #[derive(Clone, Debug)]
 pub struct CpuTexture {
     image: RgbaImage,
+    // todo: format? needs to be linear for normal maps
     // todo: view and sampler info from dist
 }
 
@@ -268,7 +269,10 @@ impl GpuTexture {
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                label: Some("black 1x1"),
+                label: Some(&format!(
+                    "color 1x1 #{:02x}{:02x}{:02x}",
+                    color.red, color.green, color.blue
+                )),
                 view_formats: &[],
             },
             wgpu::util::TextureDataOrder::default(),

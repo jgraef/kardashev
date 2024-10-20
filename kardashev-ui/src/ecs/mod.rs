@@ -3,8 +3,6 @@ pub mod resource;
 pub mod schedule;
 pub mod server;
 pub mod system;
-pub mod tick;
-pub mod world;
 
 use std::borrow::Cow;
 

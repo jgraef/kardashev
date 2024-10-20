@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bytemuck::{
     Pod,
     Zeroable,
@@ -21,6 +23,7 @@ use crate::{
         mesh::Mesh,
         render_frame::{
             CreateRenderPass,
+            CreateRenderPassContext,
             RenderPass,
             RenderPassContext,
         },
@@ -33,7 +36,6 @@ use crate::{
             HasVertexBufferLayout,
         },
         Backend,
-        Surface,
         SurfaceSize,
     },
     utils::time::{
@@ -42,35 +44,28 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
-pub struct Render3dPass<P = Render3dMeshesWithMaterial> {
-    pipeline: P,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group_layout: wgpu::BindGroupLayout,
-    camera_bind_group: wgpu::BindGroup,
-    light_buffer: wgpu::Buffer,
-    light_bind_group_layout: wgpu::BindGroupLayout,
-    light_bind_group: wgpu::BindGroup,
-    depth_texture: DepthTexture,
-    creation_time: Instant,
-    fps: TicksPerSecond,
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CreateRender3dPass<P = CreateRender3dMeshesWithMaterial> {
+    pub create_pipeline: P,
 }
 
-impl<P: Render3dPipeline> Render3dPass<P> {
-    pub fn new(
-        backend: &Backend,
-        surface_size: SurfaceSize,
-        surface_format: wgpu::TextureFormat,
-    ) -> Self {
-        let camera_buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("camera buffer"),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            size: wgpu_buffer_size::<CameraUniform>(),
-        });
+impl<P: CreateRender3dPipeline> CreateRenderPass for CreateRender3dPass<P> {
+    type RenderPass = Render3dPass<P::Pipeline>;
+
+    fn create_render_pass(self, context: &CreateRenderPassContext) -> Self::RenderPass {
+        let camera_buffer = context
+            .backend
+            .device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("camera buffer"),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+                size: wgpu_buffer_size::<CameraUniform>(),
+            });
 
         let camera_bind_group_layout =
-            backend
+            context
+                .backend
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("camera_bind_group_layout"),
@@ -86,26 +81,32 @@ impl<P: Render3dPipeline> Render3dPass<P> {
                     }],
                 });
 
-        let camera_bind_group = backend
+        let camera_bind_group =
+            context
+                .backend
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &camera_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_buffer.as_entire_binding(),
+                    }],
+                    label: Some("camera_bind_group"),
+                });
+
+        let light_buffer = context
+            .backend
             .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &camera_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                }],
-                label: Some("camera_bind_group"),
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("light buffer"),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+                size: wgpu_buffer_size::<LightUniform>(),
             });
 
-        let light_buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("light buffer"),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            size: wgpu_buffer_size::<LightUniform>(),
-        });
-
         let light_bind_group_layout =
-            backend
+            context
+                .backend
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("light bind group layout"),
@@ -121,30 +122,34 @@ impl<P: Render3dPipeline> Render3dPass<P> {
                     }],
                 });
 
-        let light_bind_group = backend
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &light_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: light_buffer.as_entire_binding(),
-                }],
-                label: None,
+        let light_bind_group =
+            context
+                .backend
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &light_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: light_buffer.as_entire_binding(),
+                    }],
+                    label: None,
+                });
+
+        let pipeline = self
+            .create_pipeline
+            .create_pipeline(&CreateRender3dPipelineContext {
+                backend: context.backend,
+                surface_format: context.surface_format,
+                depth_texture_format: DepthTexture::FORMAT,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                light_bind_group_layout: &light_bind_group_layout,
             });
 
-        let pipeline = P::create_pipeline(&CreateRender3dPipelineContext {
-            backend,
-            surface_format,
-            depth_texture_format: DepthTexture::FORMAT,
-            camera_bind_group_layout: &camera_bind_group_layout,
-            light_bind_group_layout: &light_bind_group_layout,
-        });
-
-        let depth_texture = DepthTexture::new(backend, surface_size);
+        let depth_texture = DepthTexture::new(context.backend, context.surface_size);
         let creation_time = Instant::now();
-        let fps = TicksPerSecond::new(60);
+        let fps = TicksPerSecond::new(Duration::from_secs(1));
 
-        Self {
+        Render3dPass {
             pipeline,
             camera_buffer,
             camera_bind_group_layout,
@@ -157,6 +162,20 @@ impl<P: Render3dPipeline> Render3dPass<P> {
             fps,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct Render3dPass<P = Render3dMeshesWithMaterial> {
+    pipeline: P,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
+    camera_bind_group: wgpu::BindGroup,
+    light_buffer: wgpu::Buffer,
+    light_bind_group_layout: wgpu::BindGroupLayout,
+    light_bind_group: wgpu::BindGroup,
+    depth_texture: DepthTexture,
+    creation_time: Instant,
+    fps: TicksPerSecond,
 }
 
 impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
@@ -232,6 +251,9 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
                 resources: context.resources,
             });
         }
+        else {
+            tracing::warn!("entity with RenderTarget component is missing other camera components");
+        }
     }
 
     fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
@@ -239,19 +261,14 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
     }
 }
 
-impl<P: Render3dPipeline> CreateRenderPass for Render3dPass<P> {
-    fn create_render_pass(surface: &Surface) -> Self {
-        Self::new(
-            &surface.backend,
-            surface.size(),
-            surface.surface_configuration.format,
-        )
-    }
+pub trait CreateRender3dPipeline {
+    type Pipeline: Render3dPipeline;
+
+    fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> Self::Pipeline;
 }
 
 pub trait Render3dPipeline {
-    fn create_pipeline(pipeline_context: &CreateRender3dPipelineContext) -> Self;
-    fn render(&mut self, pipeline_context: &mut Render3dPipelineContext);
+    fn render(&mut self, context: &mut Render3dPipelineContext);
 }
 
 #[derive(Debug)]
@@ -273,16 +290,14 @@ pub struct Render3dPipelineContext<'a> {
     pub resources: &'a mut Resources,
 }
 
-#[derive(Debug)]
-pub struct Render3dMeshesWithMaterial {
-    pipeline: wgpu::RenderPipeline,
-    material_bind_group_layout: wgpu::BindGroupLayout,
-    draw_batcher: DrawBatcher,
-}
+#[derive(Clone, Debug, Default)]
+pub struct CreateRender3dMeshesWithMaterial;
 
-impl Render3dPipeline for Render3dMeshesWithMaterial {
-    fn create_pipeline(pipeline_context: &CreateRender3dPipelineContext) -> Self {
-        let shader = pipeline_context
+impl CreateRender3dPipeline for CreateRender3dMeshesWithMaterial {
+    type Pipeline = Render3dMeshesWithMaterial;
+
+    fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> Self::Pipeline {
+        let shader = context
             .backend
             .device
             .create_shader_module(wgpu::include_wgsl!("../../../assets/shader/shader.wgsl"));
@@ -313,91 +328,106 @@ impl Render3dPipeline for Render3dMeshesWithMaterial {
             }
         }
 
-        let material_bind_group_layout = pipeline_context.backend.device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture bind group layout"),
-                entries: &[
-                    material_texture_view_bind_group_entry(0),
-                    material_sampler_bind_group_entry(1),
-                    material_texture_view_bind_group_entry(2),
-                    material_sampler_bind_group_entry(3),
-                    material_texture_view_bind_group_entry(4),
-                    material_sampler_bind_group_entry(5),
-                    material_texture_view_bind_group_entry(6),
-                    material_sampler_bind_group_entry(7),
-                    material_texture_view_bind_group_entry(8),
-                    material_sampler_bind_group_entry(9),
-                    material_texture_view_bind_group_entry(10),
-                    material_sampler_bind_group_entry(11),
-                ],
-            },
-        );
+        let material_bind_group_layout =
+            context
+                .backend
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("texture bind group layout"),
+                    entries: &[
+                        material_texture_view_bind_group_entry(0),
+                        material_sampler_bind_group_entry(1),
+                        material_texture_view_bind_group_entry(2),
+                        material_sampler_bind_group_entry(3),
+                        material_texture_view_bind_group_entry(4),
+                        material_sampler_bind_group_entry(5),
+                        material_texture_view_bind_group_entry(6),
+                        material_sampler_bind_group_entry(7),
+                        material_texture_view_bind_group_entry(8),
+                        material_sampler_bind_group_entry(9),
+                        material_texture_view_bind_group_entry(10),
+                        material_sampler_bind_group_entry(11),
+                    ],
+                });
 
-        let pipeline_layout = pipeline_context.backend.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Render3dMeshesWithMaterial pipeline layout"),
-                bind_group_layouts: &[
-                    &material_bind_group_layout,
-                    &pipeline_context.camera_bind_group_layout,
-                    &pipeline_context.light_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
+        let pipeline_layout =
+            context
+                .backend
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Render3dMeshesWithMaterial pipeline layout"),
+                    bind_group_layouts: &[
+                        &material_bind_group_layout,
+                        &context.camera_bind_group_layout,
+                        &context.light_bind_group_layout,
+                    ],
+                    push_constant_ranges: &[],
+                });
 
-        let pipeline = pipeline_context.backend.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Render3dMeshesWithMaterial pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &[Vertex::layout(), Instance::layout()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: pipeline_context.surface_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: pipeline_context.depth_texture_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            },
-        );
+        let pipeline =
+            context
+                .backend
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Render3dMeshesWithMaterial pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: "vs_main",
+                        buffers: &[Vertex::layout(), Instance::layout()],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: "fs_main",
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: context.surface_format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: context.depth_texture_format,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview: None,
+                    cache: None,
+                });
 
-        Self {
+        Render3dMeshesWithMaterial {
             pipeline,
             material_bind_group_layout,
-            draw_batcher: DrawBatcher::new(pipeline_context.backend),
+            draw_batcher: DrawBatcher::new(context.backend),
         }
     }
+}
 
+#[derive(Debug)]
+pub struct Render3dMeshesWithMaterial {
+    pipeline: wgpu::RenderPipeline,
+    material_bind_group_layout: wgpu::BindGroupLayout,
+    draw_batcher: DrawBatcher,
+}
+
+impl Render3dPipeline for Render3dMeshesWithMaterial {
     fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
         pipeline_context.render_pass.set_pipeline(&self.pipeline);
 

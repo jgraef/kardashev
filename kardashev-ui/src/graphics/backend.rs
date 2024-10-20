@@ -58,12 +58,13 @@ impl Backend {
         instance: Arc<wgpu::Instance>,
         config: &Config,
         compatible_surface: Option<&wgpu::Surface<'static>>,
+        required_limits: wgpu::Limits,
     ) -> Result<Self, Error> {
         tracing::debug!("creating render adapter");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: config.power_preference,
-                compatible_surface: compatible_surface,
+                compatible_surface,
                 force_fallback_adapter: false,
             })
             .await
@@ -74,8 +75,8 @@ impl Backend {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     required_features: Default::default(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-                    memory_hints: wgpu::MemoryHints::Performance,
+                    required_limits,
+                    memory_hints: config.memory_hints.as_wgpu(),
                 },
                 None,
             )

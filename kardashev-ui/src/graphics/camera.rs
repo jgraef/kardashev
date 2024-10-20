@@ -1,10 +1,8 @@
 use std::{
     fmt::Debug,
     sync::Arc,
-    task::Poll,
 };
 
-use hecs::Entity;
 use nalgebra::Perspective3;
 use palette::{
     Srgba,
@@ -12,17 +10,13 @@ use palette::{
 };
 
 use crate::{
-    ecs::system::{
-        System,
-        SystemContext,
-    },
-    error::Error,
     graphics::{
         backend::Backend,
         render_frame::{
             CreateRenderPass,
+            CreateRenderPassContext,
+            DynRenderPass,
             RenderPass,
-            RenderPassContext,
         },
         Surface,
         SurfaceSize,
@@ -86,40 +80,13 @@ impl Default for ClearColor {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ChangeCameraAspectRatio {
-    pub camera_entity: Entity,
-    pub aspect: f32,
-}
-
-impl System for ChangeCameraAspectRatio {
-    type Error = Error;
-
-    fn label(&self) -> &'static str {
-        "change-camera-aspect-ratio"
-    }
-
-    fn poll_system(
-        &mut self,
-        _task_context: &mut std::task::Context<'_>,
-        system_context: &mut SystemContext<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        let mut camera = system_context
-            .world
-            .get::<&mut CameraProjection>(self.camera_entity)
-            .unwrap();
-        camera.set_aspect(self.aspect);
-        Poll::Ready(Ok(()))
-    }
-}
-
 #[derive(Debug)]
 pub struct RenderTarget {
     pub(super) inner: ThreadLocalCell<RenderTargetInner>,
 }
 
 impl RenderTarget {
-    pub fn from_surface<R: CreateRenderPass + 'static>(surface: &Surface) -> Self {
+    pub fn new<P: CreateRenderPass + 'static>(surface: &Surface, create_render_pass: P) -> Self {
         Self {
             inner: ThreadLocalCell::new(RenderTargetInner {
                 surface: surface.surface.clone(),
@@ -127,7 +94,13 @@ impl RenderTarget {
                 surface_size_listener: surface.size_listener(),
                 surface_visibility_listener: surface.visibility_listener(),
                 backend: surface.backend.clone(),
-                render_pass: DynRenderPass::new(R::create_render_pass(surface)),
+                render_pass: DynRenderPass::new(create_render_pass.create_render_pass(
+                    &CreateRenderPassContext {
+                        backend: &surface.backend,
+                        surface_size: surface.size(),
+                        surface_format: surface.format(),
+                    },
+                )),
             }),
         }
     }
@@ -155,33 +128,5 @@ impl RenderTargetInner {
             .configure(&self.backend.device, &self.surface_configuration);
 
         self.render_pass.resize(&self.backend, surface_size);
-    }
-}
-
-pub struct DynRenderPass {
-    inner: Box<dyn RenderPass>,
-}
-
-impl DynRenderPass {
-    pub fn new(render_pass: impl RenderPass + 'static) -> Self {
-        DynRenderPass {
-            inner: Box::new(render_pass),
-        }
-    }
-}
-
-impl Debug for DynRenderPass {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BoxedRenderPass").finish_non_exhaustive()
-    }
-}
-
-impl RenderPass for DynRenderPass {
-    fn render(&mut self, render_pass_context: &mut RenderPassContext) {
-        self.inner.render(render_pass_context);
-    }
-
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
-        self.inner.resize(backend, surface_size);
     }
 }

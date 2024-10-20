@@ -1,5 +1,3 @@
-use std::task::Poll;
-
 use crate::ecs::{
     system::{
         DynSystem,
@@ -27,38 +25,16 @@ impl System for Schedule {
         "schedule"
     }
 
-    fn poll_system(
-        &mut self,
-        task_context: &mut std::task::Context<'_>,
-        system_context: &mut SystemContext<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        let mut i = 0;
-
-        while i < self.systems.len() {
-            let system = &mut self.systems[i];
-
-            match system.poll_system(task_context, system_context) {
-                Poll::Ready(Ok(())) => {
-                    let system = self.systems.remove(i);
-                    tracing::debug!(label = %system.label(), "system done");
+    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
+        for system in &mut self.systems {
+            system.poll_system(system_context).map_err(|error| {
+                Error::System {
+                    system: system.label(),
+                    error,
                 }
-                Poll::Ready(Err(error)) => {
-                    return Poll::Ready(Err(Error::System {
-                        system: system.label(),
-                        error,
-                    }))
-                }
-                Poll::Pending => {
-                    i += 1;
-                }
-            }
+            })?;
         }
 
-        if self.systems.is_empty() {
-            Poll::Ready(Ok(()))
-        }
-        else {
-            Poll::Pending
-        }
+        Ok(())
     }
 }

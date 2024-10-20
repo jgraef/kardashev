@@ -1,12 +1,10 @@
 mod components;
 mod config;
-mod map;
+mod world_view;
 
 use core::str;
-use std::task::Poll;
 
 use components::window::provide_graphics;
-use hecs::Entity;
 use kardashev_client::ApiClient;
 use kardashev_protocol::asset_id;
 use kardashev_style::style;
@@ -18,36 +16,31 @@ use leptos::{
     IntoView,
 };
 use leptos_meta::provide_meta_context;
-use leptos_router::{
-    Redirect,
-    Route,
-    Router,
-    Routes,
-};
+use leptos_router::Router;
 use nalgebra::{
-    Point3,
     Similarity3,
     Vector3,
 };
 use palette::WithAlpha;
 
-use self::map::Map;
 use crate::{
     app::{
-        components::dock::Dock,
         config::{
             provide_config,
             Config,
             Urls,
         },
-        map::MapPlugin,
+        world_view::{
+            MapPlugin,
+            WorldView,
+        },
     },
     assets::{
         load::Load,
         system::AssetsPlugin,
     },
     ecs::{
-        server::World,
+        server::WorldServer,
         system::{
             System,
             SystemContext,
@@ -56,10 +49,6 @@ use crate::{
     },
     error::Error,
     graphics::{
-        camera::{
-            CameraProjection,
-            ClearColor,
-        },
         material::Material,
         mesh::{
             shape,
@@ -98,13 +87,14 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <div class=Style::app>
-                <Dock />
+                //<Dock />
                 <main class=Style::main>
-                    <Routes>
+                    /*<Routes>
                         <Route path="/" view=|| view!{ <Redirect path="/dashboard"/> } />
                         <Route path="/dashboard" view=|| view!{ "TODO: Dashboard" } />
                         <Route path="/map" view=Map />
-                    </Routes>
+                    </Routes>*/
+                    <WorldView />
                 </main>
             </div>
         </Router>
@@ -120,7 +110,7 @@ fn provide_world() {
     provide_context(api_client.clone());
 
     tracing::debug!("creating world");
-    let world = World::builder()
+    let world = WorldServer::builder()
         .with_resource(api_client)
         .with_plugin(AssetsPlugin::from_url(asset_url))
         .with_plugin(InputPlugin::default())
@@ -138,9 +128,8 @@ fn provide_world() {
 
                 fn poll_system(
                     &mut self,
-                    _task_context: &mut std::task::Context<'_>,
                     system_context: &mut SystemContext<'_>,
-                ) -> Poll<Result<(), Self::Error>> {
+                ) -> Result<(), Self::Error> {
                     //let api_client = context.resources.get::<ApiClient>().unwrap();
                     // todo: we don't want to wait here for a reply, but should spawn a oneshot
                     // system when the request finishes
@@ -169,18 +158,7 @@ fn provide_world() {
                         Label::new_static("better star"),
                     ));
 
-                    let camera_entity = system_context.world.spawn((
-                        Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
-                        CameraProjection::new(1., 45., 0.1, 100.),
-                        ClearColor::new(palette::named::BLACK.into_format().with_alpha(1.0)),
-                        Label::new_static("camera"),
-                    ));
-
-                    system_context
-                        .resources
-                        .insert(MainCamera { camera_entity });
-
-                    Poll::Ready(Ok(()))
+                    Ok(())
                 }
             }
 
@@ -189,9 +167,4 @@ fn provide_world() {
         .build();
 
     provide_context(world);
-}
-
-#[derive(Clone, Debug)]
-pub struct MainCamera {
-    pub camera_entity: Entity,
 }

@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     future::Future,
     pin::Pin,
     task::{
@@ -71,23 +70,39 @@ pub fn sleep(duration: Duration) -> Sleep {
 
 #[derive(Debug)]
 pub struct TicksPerSecond {
-    times: VecDeque<Instant>,
-    num_past: usize,
+    measurement_start: Option<Instant>,
+    measurement_duration: Duration,
+    measurement: Option<f32>,
+    num_ticks: usize,
 }
 
 impl TicksPerSecond {
-    pub fn new(num_past: usize) -> Self {
+    pub fn new(measurement_duration: Duration) -> Self {
         Self {
-            times: VecDeque::with_capacity(num_past),
-            num_past,
+            measurement_start: None,
+            measurement_duration,
+            measurement: None,
+            num_ticks: 0,
         }
     }
 
     pub fn push(&mut self, time: Instant) {
-        if self.times.len() == self.num_past {
-            self.times.pop_front();
+        if let Some(measurement_start) = self.measurement_start {
+            let measurement_duration = time.duration_since(measurement_start);
+            if measurement_duration > self.measurement_duration {
+                self.measurement =
+                    Some((self.num_ticks as f32) / measurement_duration.as_secs_f32());
+                self.measurement_start = Some(time);
+                self.num_ticks = 1;
+            }
+            else {
+                self.num_ticks += 1;
+            }
         }
-        self.times.push_back(time);
+        else {
+            self.measurement_start = Some(time);
+            self.num_ticks = 1;
+        }
     }
 
     pub fn push_now(&mut self) {
@@ -95,18 +110,10 @@ impl TicksPerSecond {
     }
 
     pub fn clear(&mut self) {
-        self.times.clear();
+        self.measurement_start = None;
     }
 
     pub fn tps(&self) -> Option<f32> {
-        (self.times.len() > 1).then(|| {
-            self.times.len() as f32
-                / self
-                    .times
-                    .front()
-                    .unwrap()
-                    .duration_since(*self.times.back().unwrap())
-                    .as_secs_f32()
-        })
+        self.measurement
     }
 }

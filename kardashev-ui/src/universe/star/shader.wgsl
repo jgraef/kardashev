@@ -18,9 +18,8 @@ struct InstanceInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4f,
-    @location(0) tex_coords: vec2f,
+    @location(0) position: vec2f,
     @location(1) color: vec4f,
-    @location(2) normal: vec3f,
 }
 
 struct FragmentOutput {
@@ -70,12 +69,12 @@ fn vs_main(
     
     let transform = camera.view_projection * model_transform;
     let scale_x = length(transform[0].xyz);
-    let scale_y = camera.aspect / scale_x;
+    let scale_y = length(transform[1].xyz);
     let translation = transform * vec4f(0.0, 0.0, 0.0, 1.0);
 
     let vertex_position = vertices[vertex_index];
     out.clip_position = translation + vec4f(vertex_position.x * scale_x, vertex_position.y * scale_y, 0.0, 1.0);
-    out.tex_coords = vertex_position;
+    out.position = vertex_position;
     out.color = instance.star_color;
     //out.normal = normalize((model_transform * vec4f(0.0, 0.0, 1.0, 0.0)).xyz);
 
@@ -84,9 +83,9 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragmentOutput {
-    //if dot(in.tex_coords, in.tex_coords) > 1.0 {
-    //    discard;
-    //}
+    if dot(in.position, in.position) > 1.0 {
+        discard;
+    }
 
     var out: FragmentOutput;
     out.color = in.color;

@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    task::Poll,
-};
+use std::fmt::Debug;
 
 use kardashev_client::AssetClient;
 use url::Url;
@@ -21,10 +18,8 @@ use crate::{
         system::{
             System,
             SystemContext,
-            SystemExt,
         },
     },
-    graphics::UpdateTick,
 };
 
 /// [`System`] that queries [`Load<A>`s](Load), loads them, and attaches the
@@ -41,16 +36,11 @@ impl System for AssetLoaderSystem {
         "asset-loader"
     }
 
-    fn poll_system(
-        &mut self,
-        _task_context: &mut std::task::Context<'_>,
-        system_context: &mut SystemContext<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        let Some(asset_type_registry) = system_context.resources.get::<AssetTypeRegistry>()
-        else {
-            tracing::warn!("missing AssetTypeRegistry resource");
-            return Poll::Ready(Ok(()));
-        };
+    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
+        let asset_type_registry = system_context
+            .resources
+            .get::<AssetTypeRegistry>()
+            .expect("missing AssetTypeRegistry resource");
 
         let asset_server = system_context
             .resources
@@ -73,7 +63,7 @@ impl System for AssetLoaderSystem {
         // attached right after this system has run
         self.command_buffer.run_on(&mut system_context.world);
 
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 }
 
@@ -134,8 +124,6 @@ impl Plugin for AssetsPlugin {
         context
             .resources
             .insert(AssetTypeRegistry::new(asset_server));
-        context
-            .schedule
-            .add_system(AssetLoaderSystem::default().each_tick::<UpdateTick>());
+        context.schedule.add_system(AssetLoaderSystem::default());
     }
 }

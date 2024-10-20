@@ -1,5 +1,3 @@
-use std::task::Poll;
-
 use hecs::Entity;
 use nalgebra::{
     Point3,
@@ -10,19 +8,13 @@ use nalgebra::{
 
 use crate::{
     ecs::{
+        server::Tick,
         system::{
             System,
             SystemContext,
         },
-        tick::{
-            Tick,
-            TickRate,
-        },
     },
-    graphics::{
-        Error,
-        UpdateTick,
-    },
+    graphics::Error,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -71,11 +63,7 @@ impl System for LocalToGlobalTransformSystem {
         "local-to-global-transform"
     }
 
-    fn poll_system(
-        &mut self,
-        _task_context: &mut std::task::Context<'_>,
-        system_context: &mut SystemContext<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
+    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
         fn local_to_global(
             entity: Entity,
             local: &Transform,
@@ -132,11 +120,6 @@ impl System for LocalToGlobalTransformSystem {
             }
         }
 
-        let tick = system_context
-            .resources
-            .get::<UpdateTick>()
-            .unwrap()
-            .current();
         let mut query =
             system_context
                 .world
@@ -148,12 +131,12 @@ impl System for LocalToGlobalTransformSystem {
                 local,
                 global,
                 parent,
-                tick,
+                system_context.tick,
                 &system_context.world,
                 &mut system_context.command_buffer,
             );
         }
 
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 }

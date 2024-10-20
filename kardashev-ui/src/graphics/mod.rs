@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod camera;
 pub mod draw_batch;
+pub mod hdr;
 pub mod material;
 pub mod mesh;
 pub mod model;
@@ -9,6 +10,7 @@ pub mod render_frame;
 pub mod texture;
 pub mod transform;
 pub mod utils;
+pub mod pbr;
 
 use std::{
     fmt::Debug,
@@ -20,7 +22,6 @@ use std::{
         },
         Arc,
     },
-    time::Duration,
 };
 
 use serde::{
@@ -37,17 +38,9 @@ use web_sys::HtmlCanvasElement;
 
 use crate::{
     assets::system::AssetTypeRegistry,
-    ecs::{
-        plugin::{
-            Plugin,
-            RegisterPluginContext,
-        },
-        system::SystemExt,
-        tick::{
-            FixedTick,
-            Tick,
-            TickRate,
-        },
+    ecs::plugin::{
+        Plugin,
+        RegisterPluginContext,
     },
     graphics::{
         backend::{
@@ -63,7 +56,6 @@ use crate::{
     utils::{
         futures::spawn_local_and_handle_error,
         thread_local_cell::ThreadLocalError,
-        time::interval,
     },
 };
 
@@ -77,6 +69,9 @@ pub enum Error {
 
     #[error("failed to request device")]
     RequestDevice(#[source] ThreadLocalError<wgpu::RequestDeviceError>),
+
+    #[error("failed to create surface")]
+    CreateSurface(#[source] ThreadLocalError<wgpu::CreateSurfaceError>),
 }
 
 impl From<wgpu::RequestDeviceError> for Error {
@@ -85,10 +80,17 @@ impl From<wgpu::RequestDeviceError> for Error {
     }
 }
 
+impl From<wgpu::CreateSurfaceError> for Error {
+    fn from(error: wgpu::CreateSurfaceError) -> Self {
+        Self::CreateSurface(ThreadLocalError::new(error))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
-    pub power_preference: wgpu::PowerPreference,
     pub backend_type: SelectBackendType,
+    pub power_preference: wgpu::PowerPreference,
+    pub memory_hints: MemoryHints,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +99,22 @@ pub enum SelectBackendType {
     #[default]
     AutoDetect,
     Select(BackendType),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum MemoryHints {
+    #[default]
+    Performance,
+    MemoryUsage,
+}
+
+impl MemoryHints {
+    pub fn as_wgpu(&self) -> wgpu::MemoryHints {
+        match self {
+            Self::Performance => wgpu::MemoryHints::Performance,
+            Self::MemoryUsage => wgpu::MemoryHints::MemoryUsage,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,7 +130,8 @@ impl Graphics {
 
         spawn_local_and_handle_error(async move {
             let reactor = Reactor::new(config, rx_command).await?;
-            reactor.run().await
+            reactor.run().await;
+            Ok::<(), Error>(())
         });
 
         Self { tx_command }
@@ -176,12 +195,12 @@ impl Reactor {
                     ..Default::default()
                 });
 
-                if let Ok(shared_backend) = Backend::new(Arc::new(instance), &config, None).await {
-                    (BackendType::WebGpu, Some(shared_backend))
-                }
-                else {
-                    tracing::info!("failed to initialize WEBGPU backend, falling back to WebGL");
-                    (BackendType::WebGl, None)
+                match Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await {
+                    Ok(shared_backend) => (BackendType::WebGpu, Some(shared_backend)),
+                    Err(error) => {
+                        tracing::info!(?error, "failed to initialize WEBGPU backend, falling back to WebGL");
+                        (BackendType::WebGl, None)
+                    }
                 }
             }
             SelectBackendType::Select(backend_type) => {
@@ -190,7 +209,7 @@ impl Reactor {
                     backends: backend_type.as_wgpu(),
                     ..Default::default()
                 });
-                let shared_backend = Backend::new(Arc::new(instance), &config, None).await?;
+                let shared_backend = Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await?;
                 (backend_type, Some(shared_backend))
             }
         };
@@ -203,27 +222,19 @@ impl Reactor {
         })
     }
 
-    async fn run(mut self) -> Result<(), Error> {
+    async fn run(mut self) {
         while let Some(command) = self.rx_command.recv().await {
-            self.handle_command(command).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
-        match command {
-            Command::CreateSurface {
-                window_handle,
-                surface_size,
-                tx_result,
-            } => {
-                let result = self.create_surface(window_handle, surface_size).await;
-                let _ = tx_result.send(result);
+            match command {
+                Command::CreateSurface {
+                    window_handle,
+                    surface_size,
+                    tx_result,
+                } => {
+                    let result = self.create_surface(window_handle, surface_size).await;
+                    let _ = tx_result.send(result);
+                }
             }
         }
-
-        Ok(())
     }
 
     async fn create_surface(
@@ -251,18 +262,16 @@ impl Reactor {
                 ..Default::default()
             }));
 
-            let surface = instance
-                .create_surface(window_handle)
-                .expect("failed to create surface");
+            let surface = instance.create_surface(window_handle)?;
 
-            let backend = Backend::new(instance, &self.config, Some(&surface))
-                .await
-                .expect("todo: handle error");
+            let backend = Backend::new(instance, &self.config, Some(&surface), wgpu::Limits::downlevel_webgl2_defaults()).await?;
 
             (surface, backend)
         };
 
         let surface_capabilities = surface.get_capabilities(&backend.adapter);
+
+        tracing::debug!("supported surface formats: {:#?}", surface_capabilities.formats);
 
         let surface_format = surface_capabilities
             .formats
@@ -270,6 +279,8 @@ impl Reactor {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_capabilities.formats[0]);
+
+        tracing::debug!("selected surface format: {surface_format:?}");
 
         let surface_configuration = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -411,6 +422,10 @@ impl Surface {
     pub fn size(&self) -> SurfaceSize {
         self.tx_resize.borrow().clone()
     }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.surface_configuration.format
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -462,69 +477,7 @@ impl Plugin for RenderPlugin {
         }
 
         context.resources.insert(GpuResourceCache::default());
-        context.resources.insert(RenderTick::new(30));
-        context.resources.insert(UpdateTick::new(30));
-
-        context
-            .schedule
-            .add_system(LocalToGlobalTransformSystem.each_tick::<UpdateTick>());
-
-        context
-            .schedule
-            .add_system(RenderingSystem.each_tick::<RenderTick>());
-    }
-}
-
-#[derive(Debug)]
-pub struct RenderTick {
-    fixed_tick: FixedTick,
-}
-
-impl RenderTick {
-    pub fn new(fps: u64) -> Self {
-        Self {
-            fixed_tick: FixedTick::new(interval(Duration::from_millis(1000 / fps))),
-        }
-    }
-}
-
-impl TickRate for RenderTick {
-    fn current(&self) -> Tick {
-        self.fixed_tick.current()
-    }
-
-    fn poll_for<F: Fn(Tick) -> bool>(
-        &mut self,
-        task_context: &mut std::task::Context<'_>,
-        f: F,
-    ) -> std::task::Poll<Tick> {
-        self.fixed_tick.poll_for(task_context, f)
-    }
-}
-
-#[derive(Debug)]
-pub struct UpdateTick {
-    fixed_tick: FixedTick,
-}
-
-impl UpdateTick {
-    pub fn new(ups: u64) -> Self {
-        Self {
-            fixed_tick: FixedTick::new(interval(Duration::from_millis(1000 / ups))),
-        }
-    }
-}
-
-impl TickRate for UpdateTick {
-    fn current(&self) -> Tick {
-        self.fixed_tick.current()
-    }
-
-    fn poll_for<F: Fn(Tick) -> bool>(
-        &mut self,
-        task_context: &mut std::task::Context<'_>,
-        f: F,
-    ) -> std::task::Poll<Tick> {
-        self.fixed_tick.poll_for(task_context, f)
+        context.schedule.add_system(LocalToGlobalTransformSystem);
+        context.schedule.add_system(RenderingSystem);
     }
 }
