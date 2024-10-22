@@ -13,7 +13,7 @@ use crate::graphics::{
     },
     transform::GlobalTransform,
     utils::{
-        color_to_array,
+        srgba_to_array4,
         HasVertexBufferLayout,
         InstanceBuffer,
     },
@@ -114,7 +114,7 @@ impl Render3dPipeline for RenderStarPipeline {
         for (_entity, (transform, star)) in query.iter() {
             self.instance_buffer.push(Instance {
                 model_transform: transform.as_homogeneous_matrix_array(),
-                color: color_to_array(star.color),
+                color: srgba_to_array4(star.color),
             });
         }
 

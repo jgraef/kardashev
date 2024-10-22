@@ -9,7 +9,11 @@ use kardashev_protocol::assets::{
     AssetId,
     Vertex,
 };
-use palette::Srgba;
+use nalgebra::Vector3;
+use palette::{
+    Srgb,
+    Srgba,
+};
 
 use crate::{
     graphics::backend::{
@@ -28,7 +32,7 @@ pub fn wgpu_buffer_size<T>() -> u64 {
     padded_size
 }
 
-pub fn color_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
+pub fn srgba_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
     wgpu::Color {
         r: color.red,
         g: color.green,
@@ -37,8 +41,18 @@ pub fn color_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
     }
 }
 
-pub fn color_to_array<T: Copy>(color: Srgba<T>) -> [T; 4] {
+pub fn srgba_to_array4<T: Copy>(color: Srgba<T>) -> [T; 4] {
     [color.red, color.green, color.blue, color.alpha]
+}
+
+pub fn srgb_to_array4<T: Copy + Default>(color: Srgb<T>) -> [T; 4] {
+    [color.red, color.green, color.blue, Default::default()]
+}
+
+pub fn vector3_to_array4<T: Copy + Default>(vector: Vector3<T>) -> [T; 4] {
+    let mut array: [T; 4] = Default::default();
+    array[..3].copy_from_slice(vector.as_slice());
+    array
 }
 
 pub trait HasVertexBufferLayout {
@@ -238,5 +252,43 @@ impl<T: Pod> InstanceBuffer<T> {
     pub fn upload_and_clear(&mut self, backend: &Backend) {
         self.upload(backend);
         self.staging.clear();
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MaterialBindGroupLayoutBuilder {
+    entries: Vec<wgpu::BindGroupLayoutEntry>,
+}
+
+impl MaterialBindGroupLayoutBuilder {
+    pub fn push_view_and_sampler(&mut self) {
+        let index = self.entries.len() as u32;
+
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding: index,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        });
+
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding: index + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            // This should match the filterable field of the
+            // corresponding Texture entry above.
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+
+    pub fn build(&self, device: &wgpu::Device, label: Option<&str>) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label,
+            entries: &self.entries,
+        })
     }
 }

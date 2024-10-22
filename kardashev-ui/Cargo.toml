@@ -57,6 +57,8 @@ tokio-util = { version = "0.7.12", features = ["compat", "io"] }
 arrayvec = "0.7.6"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
 web-time = "1.1.0"
+smallvec = { version = "1.13.2", features = ["const_generics", "const_new", "serde"] }
+include-wgsl-oil = { version = "0.2.8", features = ["minify"] }
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

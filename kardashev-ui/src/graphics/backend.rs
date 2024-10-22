@@ -9,15 +9,20 @@ use std::{
     },
 };
 
-use linear_map::LinearMap;
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::graphics::{
-    Config,
-    Error,
+use crate::{
+    graphics::{
+        Config,
+        Error,
+    },
+    utils::small_linear_map::{
+        self,
+        SmallLinearMap,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,41 +107,31 @@ impl Backend {
     }
 }
 
-/// Struct holding the handles to on-GPU resources.
-///
-/// This is usually used as an component (e.g. as a `OnGpu<Mesh>`).
 #[derive(Clone, Debug)]
 pub struct PerBackend<T> {
-    // todo: use SmallVec
-    map: LinearMap<BackendId, T>,
+    map: SmallLinearMap<2, BackendId, T>,
 }
 
 impl<T> Default for PerBackend<T> {
     fn default() -> Self {
         Self {
-            map: LinearMap::new(),
+            map: SmallLinearMap::new(),
         }
     }
 }
 
 impl<T> PerBackend<T> {
-    /// Returns the [`BackendResourceHandle`] for the specified `backend_id`.
-    ///
-    /// Loads the asset to the GPU, if it isn't already.
     pub fn get_or_try_insert<F, E>(&mut self, backend_id: BackendId, insert: F) -> Result<&T, E>
     where
         F: FnOnce() -> Result<T, E>,
         E: std::error::Error + 'static,
     {
-        let resource = match self.map.entry(backend_id) {
-            linear_map::Entry::Occupied(occupied) => occupied.into_mut(),
-            linear_map::Entry::Vacant(vacant) => {
-                tracing::debug!(?backend_id, "loading asset to gpu");
-                let resource = insert()?;
-                vacant.insert(resource)
+        match self.map.entry(backend_id) {
+            small_linear_map::Entry::Occupied(occupied) => Ok(occupied.into_mut()),
+            small_linear_map::Entry::Vacant(vacant) => {
+                let value = insert()?;
+                Ok(vacant.insert(value))
             }
-        };
-
-        Ok(resource)
+        }
     }
 }

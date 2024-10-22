@@ -47,7 +47,7 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Mesh {
     asset_id: Option<AssetId>,
     label: Option<String>,

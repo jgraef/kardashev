@@ -36,6 +36,10 @@ use crate::{
     },
     error::Error,
     graphics::{
+        blinn_phong::{
+            BlinnPhongRenderPipeline,
+            CreateBlinnPhongRenderPipeline,
+        },
         camera::{
             CameraProjection,
             ClearColor,
@@ -43,11 +47,9 @@ use crate::{
         },
         hdr::CreateToneMapPass,
         render_3d::{
-            CreateRender3dMeshesWithMaterial,
             CreateRender3dPass,
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
-            Render3dMeshesWithMaterial,
             Render3dPipeline,
             Render3dPipelineContext,
         },
@@ -160,7 +162,7 @@ impl CreateRender3dPipeline for CreateWorldViewPipeline {
 
     fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> WorldViewPipeline {
         WorldViewPipeline {
-            meshes_with_material: CreateRender3dMeshesWithMaterial.create_pipeline(context),
+            pbr: CreateBlinnPhongRenderPipeline.create_pipeline(context),
             //stars: RenderStarPipeline::create_pipeline(pipeline_context),
         }
     }
@@ -168,13 +170,13 @@ impl CreateRender3dPipeline for CreateWorldViewPipeline {
 
 #[derive(Debug)]
 struct WorldViewPipeline {
-    meshes_with_material: Render3dMeshesWithMaterial,
+    pbr: BlinnPhongRenderPipeline,
     //stars: RenderStarPipeline,
 }
 
 impl Render3dPipeline for WorldViewPipeline {
     fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
-        self.meshes_with_material.render(pipeline_context);
+        self.pbr.render(pipeline_context);
         //self.stars.render(pipeline_context);
     }
 }

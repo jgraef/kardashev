@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use bytemuck::Pod;
+
 use crate::{
     graphics::{
         backend::Backend,
@@ -15,21 +17,20 @@ use crate::{
             GpuMesh,
             GpuMeshId,
         },
-        render_3d::Instance,
         utils::InstanceBuffer,
     },
     utils::thread_local_cell::ThreadLocalCell,
 };
 
 #[derive(Debug)]
-pub struct DrawBatcher {
-    instance_buffer: InstanceBuffer<Instance>,
-    entries: HashMap<DrawBatchKey, DrawBatchEntry>,
-    reuse_instance_vecs: Vec<Vec<Instance>>,
+pub struct DrawBatcher<I> {
+    instance_buffer: InstanceBuffer<I>,
+    entries: HashMap<DrawBatchKey, DrawBatchEntry<I>>,
+    reuse_instance_vecs: Vec<Vec<I>>,
     batches: Vec<DrawBatch>,
 }
 
-impl DrawBatcher {
+impl<I> DrawBatcher<I> {
     const INITIAL_BUFFER_SIZE: usize = 1024;
 
     pub fn new(backend: &Backend) -> Self {
@@ -41,6 +42,30 @@ impl DrawBatcher {
         }
     }
 
+    pub fn push(
+        &mut self,
+        mesh: &Arc<ThreadLocalCell<GpuMesh>>,
+        material: &Arc<ThreadLocalCell<GpuMaterial>>,
+        instance: I,
+    ) {
+        self.entries
+            .entry(DrawBatchKey {
+                mesh_id: mesh.get().id(),
+                material_id: material.get().id(),
+            })
+            .or_insert_with(|| {
+                DrawBatchEntry {
+                    instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
+                    mesh: mesh.clone(),
+                    material: material.clone(),
+                }
+            })
+            .instances
+            .push(instance);
+    }
+}
+
+impl<I: Pod> DrawBatcher<I> {
     pub fn draw(&mut self, backend: &Backend, render_pass: &mut wgpu::RenderPass) {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
@@ -83,28 +108,6 @@ impl DrawBatcher {
             }
         }
     }
-
-    pub fn push(
-        &mut self,
-        mesh: &Arc<ThreadLocalCell<GpuMesh>>,
-        material: &Arc<ThreadLocalCell<GpuMaterial>>,
-        instance: Instance,
-    ) {
-        self.entries
-            .entry(DrawBatchKey {
-                mesh_id: mesh.get().id(),
-                material_id: material.get().id(),
-            })
-            .or_insert_with(|| {
-                DrawBatchEntry {
-                    instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
-                    mesh: mesh.clone(),
-                    material: material.clone(),
-                }
-            })
-            .instances
-            .push(instance);
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -114,8 +117,8 @@ struct DrawBatchKey {
 }
 
 #[derive(Debug)]
-struct DrawBatchEntry {
-    instances: Vec<Instance>,
+struct DrawBatchEntry<I> {
+    instances: Vec<I>,
     mesh: Arc<ThreadLocalCell<GpuMesh>>,
     material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
@@ -127,12 +130,12 @@ struct DrawBatch {
     material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
 
-fn create_instance_buffer(backend: &Backend, size: usize) -> wgpu::Buffer {
+fn create_instance_buffer<I>(backend: &Backend, size: usize) -> wgpu::Buffer {
     tracing::debug!(size, "allocating instance buffer");
 
     backend.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("instance buffer"),
-        size: (size * std::mem::size_of::<Instance>()) as u64,
+        size: (size * std::mem::size_of::<I>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })

@@ -1,16 +1,18 @@
 pub mod backend;
+pub mod blinn_phong;
 pub mod camera;
 pub mod draw_batch;
 pub mod hdr;
+pub mod light;
 pub mod material;
 pub mod mesh;
 pub mod model;
+pub mod pbr;
 pub mod render_3d;
 pub mod render_frame;
 pub mod texture;
 pub mod transform;
 pub mod utils;
-pub mod pbr;
 
 use std::{
     fmt::Debug,
@@ -47,6 +49,7 @@ use crate::{
             Backend,
             BackendType,
         },
+        blinn_phong::BlinnPhongMaterial,
         material::Material,
         mesh::Mesh,
         render_frame::RenderingSystem,
@@ -101,7 +104,9 @@ pub enum SelectBackendType {
     Select(BackendType),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub enum MemoryHints {
     #[default]
     Performance,
@@ -195,10 +200,14 @@ impl Reactor {
                     ..Default::default()
                 });
 
-                match Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await {
+                match Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await
+                {
                     Ok(shared_backend) => (BackendType::WebGpu, Some(shared_backend)),
                     Err(error) => {
-                        tracing::info!(?error, "failed to initialize WEBGPU backend, falling back to WebGL");
+                        tracing::info!(
+                            ?error,
+                            "failed to initialize WEBGPU backend, falling back to WebGL"
+                        );
                         (BackendType::WebGl, None)
                     }
                 }
@@ -209,7 +218,9 @@ impl Reactor {
                     backends: backend_type.as_wgpu(),
                     ..Default::default()
                 });
-                let shared_backend = Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await?;
+                let shared_backend =
+                    Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default())
+                        .await?;
                 (backend_type, Some(shared_backend))
             }
         };
@@ -264,14 +275,23 @@ impl Reactor {
 
             let surface = instance.create_surface(window_handle)?;
 
-            let backend = Backend::new(instance, &self.config, Some(&surface), wgpu::Limits::downlevel_webgl2_defaults()).await?;
+            let backend = Backend::new(
+                instance,
+                &self.config,
+                Some(&surface),
+                wgpu::Limits::downlevel_webgl2_defaults(),
+            )
+            .await?;
 
             (surface, backend)
         };
 
         let surface_capabilities = surface.get_capabilities(&backend.adapter);
 
-        tracing::debug!("supported surface formats: {:#?}", surface_capabilities.formats);
+        tracing::debug!(
+            "supported surface formats: {:#?}",
+            surface_capabilities.formats
+        );
 
         let surface_format = surface_capabilities
             .formats
@@ -470,7 +490,7 @@ impl Plugin for RenderPlugin {
             asset_type_registry
                 .register::<Texture>()
                 .register::<Mesh>()
-                .register::<Material>();
+                .register::<Material<BlinnPhongMaterial>>();
         }
         else {
             tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");

@@ -21,7 +21,6 @@ use nalgebra::{
     Similarity3,
     Vector3,
 };
-use palette::WithAlpha;
 
 use crate::{
     app::{
@@ -49,18 +48,17 @@ use crate::{
     },
     error::Error,
     graphics::{
-        material::Material,
-        mesh::{
+        blinn_phong::BlinnPhongMaterial, light::{
+            AmbientLight,
+            PointLight,
+        }, material::Material, mesh::{
             shape,
             Mesh,
             MeshBuilder,
             Meshable,
-        },
-        transform::Transform,
-        RenderPlugin,
+        }, transform::Transform, RenderPlugin
     },
     input::InputPlugin,
-    universe::star::render::Star,
 };
 
 #[style(path = "src/app/app.scss")]
@@ -135,28 +133,46 @@ fn provide_world() {
                     // system when the request finishes
                     //let stars = api_client.get_stars().await?;
 
-                    let _star_entity = system_context.world.spawn((
+                    let sphere = Mesh::from(shape::Sphere::default().mesh().build());
+
+                    let _sun = system_context.world.spawn((
                         Transform {
                             model_matrix: Similarity3::identity(),
                         },
-                        Mesh::from(shape::Sphere::default().mesh().build()),
-                        Load::<Material>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
+                        sphere.clone(),
+                        Load::<Material<BlinnPhongMaterial>>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
                         Label::new_static("star"),
                     ));
 
-                    let _star2 = system_context.world.spawn((
+                    let _earth = system_context.world.spawn((
                         Transform {
                             model_matrix: Similarity3::new(
-                                Vector3::new(-3.0, 0.0, 0.0),
+                                Vector3::new(-5.0, 0.0, 0.0),
                                 Vector3::zeros(),
                                 1.0,
                             ),
                         },
-                        Star {
-                            color: palette::named::PINK.into_format().with_alpha(1.0),
-                        },
-                        Label::new_static("better star"),
+                        sphere,
+                        Load::<Material<BlinnPhongMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
+                        Label::new_static("earth"),
                     ));
+
+                    let _light = system_context.world.spawn((
+                        Transform {
+                            model_matrix: Similarity3::new(
+                                Vector3::new(0.0, -2.0, 5.0),
+                                Vector3::zeros(),
+                                1.0,
+                            ),
+                        },
+                        PointLight {
+                            color: palette::named::YELLOW.into_format(),
+                        },
+                    ));
+
+                    system_context.resources.insert(AmbientLight {
+                        color: palette::named::BLUEVIOLET.into_format(),
+                    });
 
                     Ok(())
                 }
