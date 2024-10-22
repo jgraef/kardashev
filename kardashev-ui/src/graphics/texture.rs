@@ -30,7 +30,10 @@ use crate::{
     },
     graphics::{
         backend::PerBackend,
-        utils::GpuResourceCache,
+        utils::{
+            GpuResourceCache,
+            TextureFormatExt,
+        },
     },
     utils::{
         thread_local_cell::ThreadLocalCell,
@@ -89,7 +92,10 @@ impl From<RgbaImage> for Texture {
         Self {
             asset_id: None,
             label: None,
-            cpu: Some(Arc::new(CpuTexture { image })),
+            cpu: Some(Arc::new(CpuTexture {
+                image,
+                format: dist::TextureFormat::Rgba8UnormSrgb,
+            })),
             gpu: PerBackend::default(),
         }
     }
@@ -180,7 +186,10 @@ pub(super) async fn load_texture_from_server(
 
     //let image = context.client.load_image(&metadata.image).await?;
     let image = load_image(data).await?;
-    Ok::<_, TextureError>(Arc::new(CpuTexture { image }))
+    Ok::<_, TextureError>(Arc::new(CpuTexture {
+        image,
+        format: dist.format,
+    }))
 }
 
 fn load_texture_to_gpu(
@@ -204,7 +213,7 @@ fn load_texture_to_gpu(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: texture.format.as_wgpu(),
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             label,
             view_formats: &[],
@@ -221,8 +230,7 @@ fn load_texture_to_gpu(
 #[derive(Clone, Debug)]
 pub struct CpuTexture {
     image: RgbaImage,
-    // todo: format? needs to be linear for normal maps
-    // todo: view and sampler info from dist
+    format: dist::TextureFormat,
 }
 
 #[derive(Debug, thiserror::Error)]

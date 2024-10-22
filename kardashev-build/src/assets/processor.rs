@@ -263,6 +263,7 @@ impl Processor {
                         w: atlas.image_size[0],
                         h: atlas.image_size[1],
                     },
+                    format: data.format,
                     crop: Some(crop),
                     u_edge_mode: None,
                     v_edge_mode: None,

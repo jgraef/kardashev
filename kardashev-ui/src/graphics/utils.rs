@@ -7,6 +7,7 @@ use std::{
 use bytemuck::Pod;
 use kardashev_protocol::assets::{
     AssetId,
+    TextureFormat,
     Vertex,
 };
 use nalgebra::Vector3;
@@ -290,5 +291,18 @@ impl MaterialBindGroupLayoutBuilder {
             label,
             entries: &self.entries,
         })
+    }
+}
+
+pub trait TextureFormatExt {
+    fn as_wgpu(&self) -> wgpu::TextureFormat;
+}
+
+impl TextureFormatExt for TextureFormat {
+    fn as_wgpu(&self) -> wgpu::TextureFormat {
+        match self {
+            TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+            TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+        }
     }
 }

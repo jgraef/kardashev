@@ -82,6 +82,9 @@ pub struct Texture {
 
     pub size: TextureSize,
 
+    #[serde(default)]
+    pub format: TextureFormat,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<TextureCrop>,
 
@@ -107,6 +110,14 @@ impl Asset for Texture {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextureFormat {
+    #[default]
+    Rgba8UnormSrgb,
+    Rgba8Unorm,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextureSize {
     pub w: u32,
@@ -129,6 +140,7 @@ pub enum TextureEdgeMode {
     ClampToBorder,
 }
 
+// todo: how do we handle different materials here?
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Material {
     pub id: AssetId,
@@ -138,6 +150,11 @@ pub struct Material {
 
     pub build_time: DateTime<Utc>,
 
+    // both
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normal: Option<AssetId>,
+
+    // blinn-phong
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ambient: Option<AssetId>,
 
@@ -148,13 +165,20 @@ pub struct Material {
     pub specular: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub normal: Option<AssetId>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub shininess: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dissolve: Option<AssetId>,
+
+    // pbr
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub albedo: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metalness: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roughness: Option<AssetId>,
 }
 
 impl HasAssetId for Material {

@@ -82,6 +82,14 @@ impl Asset for Material {
             }
         }
 
+        let normal = process_texture(
+            &self.normal,
+            MaterialProperty::Normal,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
         let ambient = process_texture(
             &self.ambient,
             MaterialProperty::Ambient,
@@ -106,14 +114,6 @@ impl Asset for Material {
             &mut freshness,
         )
         .await?;
-        let normal = process_texture(
-            &self.normal,
-            MaterialProperty::Normal,
-            id,
-            context,
-            &mut freshness,
-        )
-        .await?;
         let shininess = process_texture(
             &self.shininess,
             MaterialProperty::Shininess,
@@ -131,6 +131,31 @@ impl Asset for Material {
         )
         .await?;
 
+        let albedo = process_texture(
+            &self.normal,
+            MaterialProperty::Albedo,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let metalness = process_texture(
+            &self.normal,
+            MaterialProperty::Metalness,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+        let roughness = process_texture(
+            &self.normal,
+            MaterialProperty::Roughness,
+            id,
+            context,
+            &mut freshness,
+        )
+        .await?;
+
         if freshness.is_fresh() {
             tracing::debug!(%id, "not modified since last build. skipping.");
             return Ok(());
@@ -140,12 +165,15 @@ impl Asset for Material {
             id,
             label: self.label.clone(),
             build_time: context.build_time,
+            normal,
             ambient,
             diffuse,
             specular,
-            normal,
             shininess,
             dissolve,
+            albedo,
+            metalness,
+            roughness,
         });
 
         context.set_build_time(id);

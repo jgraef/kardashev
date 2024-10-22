@@ -1,31 +1,39 @@
-use bytemuck::{
-    Pod,
-    Zeroable,
-};
 use kardashev_protocol::assets::{
+    self as dist,
     AssetId,
     Vertex,
 };
 
 use crate::{
-    assets::load::LoadAssetContext,
+    assets::{
+        load::{
+            LoadAssetContext,
+            LoadFromAsset,
+        },
+        AssetNotFound,
+    },
     graphics::{
-        backend::Backend,
         draw_batch::DrawBatcher,
         material::{
+            get_fallback,
+            BindGroupBuilder,
             CpuMaterial,
             GpuMaterial,
-            Material,
             MaterialError,
         },
-        mesh::Mesh,
         render_3d::{
+            batch_meshes_with_material,
+            draw_batched_meshes_with_materials,
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
+            Instance,
             Render3dPipeline,
             Render3dPipelineContext,
         },
-        transform::GlobalTransform,
+        texture::{
+            Texture,
+            TextureError,
+        },
         utils::{
             GpuResourceCache,
             HasVertexBufferLayout,
@@ -47,7 +55,7 @@ impl CreateRender3dPipeline for CreatePbrRenderPipeline {
             .create_shader_module(wgpu::include_wgsl!("pbr.wgsl"));
 
         let mut material_bind_group_layout_builder = MaterialBindGroupLayoutBuilder::default();
-        for _ in 0..6 {
+        for _ in 0..4 {
             material_bind_group_layout_builder.push_view_and_sampler();
         }
 
@@ -142,139 +150,95 @@ impl Render3dPipeline for PbrRenderPipeline {
             .render_pass
             .set_bind_group(2, &pipeline_context.light_bind_group, &[]);
 
-        tracing::trace!("batching");
+        batch_meshes_with_material::<PbrMaterial>(
+            pipeline_context,
+            &self.material_bind_group_layout,
+            &mut self.draw_batcher,
+        );
 
-        let mut render_entities =
-            pipeline_context
-                .world
-                .query::<(&GlobalTransform, &mut Mesh, &mut Material<PbrMaterial>)>();
-
-        let gpu_resource_cache = pipeline_context
-            .resources
-            .get_mut_or_insert_default::<GpuResourceCache>();
-
-        for (entity, (transform, mesh, material)) in render_entities.iter() {
-            tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
-
-            // handle errors
-
-            let Ok(mesh) = mesh.gpu(&pipeline_context.backend, gpu_resource_cache)
-            else {
-                continue;
-            };
-
-            let Ok(material) = material.gpu(
-                &pipeline_context.backend,
-                gpu_resource_cache,
-                &self.material_bind_group_layout,
-            )
-            else {
-                continue;
-            };
-
-            self.draw_batcher
-                .push(mesh, material, Instance::from_transform(transform));
-        }
-
-        self.draw_batcher
-            .draw(pipeline_context.backend, pipeline_context.render_pass);
+        draw_batched_meshes_with_materials::<PbrMaterial>(
+            pipeline_context,
+            &mut self.draw_batcher,
+            1,
+            0,
+            0,
+        );
     }
 }
 
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-#[repr(C)]
-pub struct Instance {
-    pub model_transform: [f32; 16],
-    // note: we're using the trick mentioned here[1] to rotate the vertex normal by the rotation of
-    // the model matrix: https://sotrh.github.io/learn-wgpu/intermediate/tutorial10-lighting/#the-normal-matrix
-    //pub normal: [f32; 9],
-}
-
-impl Instance {
-    pub fn from_transform(transform: &GlobalTransform) -> Self {
-        Self {
-            model_transform: transform.as_homogeneous_matrix_array(),
-            /*normal: transform
-            .model_matrix
-            .isometry
-            .rotation
-            .to_rotation_matrix()
-            .matrix()
-            .as_slice()
-            .try_into()
-            .expect("convert rotation matrix to array"),*/
-        }
-    }
-}
-
-impl HasVertexBufferLayout for Instance {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // model transform
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // normal
-                /*wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
-                    shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
-                    shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x3,
-                },*/
-            ],
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PbrMaterial {
-    // todo
+    pub albedo: Option<Texture>,
+    pub normal: Option<Texture>,
+    pub metalness: Option<Texture>,
+    pub roughness: Option<Texture>,
 }
 
 impl CpuMaterial for PbrMaterial {
     async fn load_from_server<'a, 'b: 'a>(
-        _asset_id: AssetId,
-        _context: &'a mut LoadAssetContext<'b>,
+        asset_id: AssetId,
+        mut context: &'a mut LoadAssetContext<'b>,
     ) -> Result<Self, MaterialError> {
-        todo!()
+        tracing::debug!(%asset_id, "loading material");
+
+        let dist = context
+            .dist_assets
+            .get::<dist::Material>(asset_id)
+            .ok_or_else(|| AssetNotFound { asset_id })?;
+
+        async fn load_material_texture<'a, 'b: 'a>(
+            asset_id: Option<AssetId>,
+            loader: &'a mut LoadAssetContext<'b>,
+        ) -> Result<Option<Texture>, TextureError> {
+            if let Some(asset_id) = asset_id {
+                Ok(Some(
+                    <Texture as LoadFromAsset>::load(asset_id, (), loader).await?,
+                ))
+            }
+            else {
+                Ok(None)
+            }
+        }
+
+        let albedo = load_material_texture(dist.albedo, &mut context).await?;
+        let normal = load_material_texture(dist.normal, &mut context).await?;
+        let metalness = load_material_texture(dist.metalness, &mut context).await?;
+        let roughness = load_material_texture(dist.roughness, &mut context).await?;
+
+        tracing::debug!(%asset_id, "material loaded");
+
+        Ok(Self {
+            albedo,
+            normal,
+            metalness,
+            roughness,
+        })
     }
 
     fn load_to_gpu(
         &mut self,
-        _label: Option<&str>,
-        _backend: &Backend,
-        _material_bind_group_layout: &wgpu::BindGroupLayout,
-        _cache: &mut GpuResourceCache,
-    ) -> Result<GpuMaterial, MaterialError> {
-        todo!()
+        label: Option<&str>,
+        backend: &super::backend::Backend,
+        material_bind_group_layout: &wgpu::BindGroupLayout,
+        cache: &mut GpuResourceCache,
+    ) -> Result<super::material::GpuMaterial, MaterialError> {
+        let fallback = get_fallback(backend, cache);
+        let fallback = fallback.get();
+
+        let mut bind_group_builder = BindGroupBuilder::<8>::new(backend, cache);
+        bind_group_builder.push(&mut self.albedo, &fallback.pink.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.normal, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.metalness, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.roughness, &fallback.black.view, &fallback.sampler)?;
+
+        let bind_group = backend
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: material_bind_group_layout,
+                entries: bind_group_builder.build(),
+                label: label.clone(),
+            });
+
+        Ok(GpuMaterial { bind_group })
     }
 }

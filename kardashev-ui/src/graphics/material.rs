@@ -210,18 +210,10 @@ pub enum MaterialError {
 
 #[derive(Debug)]
 pub struct Fallback {
-    pub ambient_texture: Arc<GpuTexture>,
-    pub ambient_sampler: Arc<wgpu::Sampler>,
-    pub diffuse_texture: Arc<GpuTexture>,
-    pub diffuse_sampler: Arc<wgpu::Sampler>,
-    pub specular_texture: Arc<GpuTexture>,
-    pub specular_sampler: Arc<wgpu::Sampler>,
-    pub normal_texture: Arc<GpuTexture>,
-    pub normal_sampler: Arc<wgpu::Sampler>,
-    pub shininess_texture: Arc<GpuTexture>,
-    pub shininess_sampler: Arc<wgpu::Sampler>,
-    pub dissolve_texture: Arc<GpuTexture>,
-    pub dissolve_sampler: Arc<wgpu::Sampler>,
+    pub white: Arc<GpuTexture>,
+    pub black: Arc<GpuTexture>,
+    pub pink: Arc<GpuTexture>,
+    pub sampler: Arc<wgpu::Sampler>,
 }
 
 pub fn get_fallback(
@@ -232,31 +224,28 @@ pub fn get_fallback(
         backend.id,
         asset_id!("916d2b03-eff1-4bc1-a5be-bc3152c9fa75"),
         || {
-            let black1x1 = Arc::new(GpuTexture::color1x1(
+            let white = Arc::new(GpuTexture::color1x1(
+                palette::named::WHITE.into_format().with_alpha(1.0),
+                backend,
+            ));
+            let black = Arc::new(GpuTexture::color1x1(
                 palette::named::BLACK.into_format().with_alpha(1.0),
                 backend,
             ));
-            let pink1x1 = Arc::new(GpuTexture::color1x1(
+            let pink = Arc::new(GpuTexture::color1x1(
                 palette::named::PINK.into_format().with_alpha(1.0),
                 backend,
             ));
+
             let sampler = Arc::new(backend.device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("fallback sampler"),
                 ..Default::default()
             }));
             Arc::new(ThreadLocalCell::new(Fallback {
-                ambient_texture: pink1x1.clone(),
-                ambient_sampler: sampler.clone(),
-                diffuse_texture: pink1x1.clone(),
-                diffuse_sampler: sampler.clone(),
-                specular_texture: pink1x1.clone(),
-                specular_sampler: sampler.clone(),
-                normal_texture: black1x1.clone(),
-                normal_sampler: sampler.clone(),
-                shininess_texture: black1x1.clone(),
-                shininess_sampler: sampler.clone(),
-                dissolve_texture: black1x1,
-                dissolve_sampler: sampler,
+                white,
+                black,
+                pink,
+                sampler,
             }))
         },
     )

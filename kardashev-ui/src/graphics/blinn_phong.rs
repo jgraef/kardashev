@@ -1,7 +1,3 @@
-use bytemuck::{
-    Pod,
-    Zeroable,
-};
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
@@ -23,13 +19,14 @@ use crate::{
             BindGroupBuilder,
             CpuMaterial,
             GpuMaterial,
-            Material,
             MaterialError,
         },
-        mesh::Mesh,
         render_3d::{
+            batch_meshes_with_material,
+            draw_batched_meshes_with_materials,
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
+            Instance,
             Render3dPipeline,
             Render3dPipelineContext,
         },
@@ -37,7 +34,6 @@ use crate::{
             Texture,
             TextureError,
         },
-        transform::GlobalTransform,
         utils::{
             GpuResourceCache,
             HasVertexBufferLayout,
@@ -160,117 +156,19 @@ impl Render3dPipeline for BlinnPhongRenderPipeline {
             .render_pass
             .set_bind_group(2, &pipeline_context.light_bind_group, &[]);
 
-        tracing::trace!("batching");
+        batch_meshes_with_material::<BlinnPhongMaterial>(
+            pipeline_context,
+            &self.material_bind_group_layout,
+            &mut self.draw_batcher,
+        );
 
-        let mut render_entities = pipeline_context.world.query::<(
-            &GlobalTransform,
-            &mut Mesh,
-            &mut Material<BlinnPhongMaterial>,
-        )>();
-
-        let gpu_resource_cache = pipeline_context
-            .resources
-            .get_mut_or_insert_default::<GpuResourceCache>();
-
-        for (entity, (transform, mesh, material)) in render_entities.iter() {
-            tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
-
-            // handle errors
-
-            let Ok(mesh) = mesh.gpu(&pipeline_context.backend, gpu_resource_cache)
-            else {
-                continue;
-            };
-
-            let Ok(material) = material.gpu(
-                &pipeline_context.backend,
-                gpu_resource_cache,
-                &self.material_bind_group_layout,
-            )
-            else {
-                continue;
-            };
-
-            self.draw_batcher
-                .push(mesh, material, Instance::from_transform(transform));
-        }
-
-        self.draw_batcher
-            .draw(pipeline_context.backend, pipeline_context.render_pass);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-#[repr(C)]
-pub struct Instance {
-    pub model_transform: [f32; 16],
-    // note: we're using the trick mentioned here[1] to rotate the vertex normal by the rotation of
-    // the model matrix: https://sotrh.github.io/learn-wgpu/intermediate/tutorial10-lighting/#the-normal-matrix
-    //pub normal: [f32; 9],
-}
-
-impl Instance {
-    pub fn from_transform(transform: &GlobalTransform) -> Self {
-        Self {
-            model_transform: transform.as_homogeneous_matrix_array(),
-            /*normal: transform
-            .model_matrix
-            .isometry
-            .rotation
-            .to_rotation_matrix()
-            .matrix()
-            .as_slice()
-            .try_into()
-            .expect("convert rotation matrix to array"),*/
-        }
-    }
-}
-
-impl HasVertexBufferLayout for Instance {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // model transform
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // normal
-                /*wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
-                    shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
-                    shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x3,
-                },*/
-            ],
-        }
+        draw_batched_meshes_with_materials::<BlinnPhongMaterial>(
+            pipeline_context,
+            &mut self.draw_batcher,
+            1,
+            0,
+            0,
+        );
     }
 }
 
@@ -342,36 +240,12 @@ impl CpuMaterial for BlinnPhongMaterial {
         let fallback = fallback.get();
 
         let mut bind_group_builder = BindGroupBuilder::<12>::new(backend, cache);
-        bind_group_builder.push(
-            &mut self.ambient,
-            &fallback.ambient_texture.view,
-            &fallback.ambient_sampler,
-        )?;
-        bind_group_builder.push(
-            &mut self.diffuse,
-            &fallback.diffuse_texture.view,
-            &fallback.diffuse_sampler,
-        )?;
-        bind_group_builder.push(
-            &mut self.specular,
-            &fallback.specular_texture.view,
-            &fallback.specular_sampler,
-        )?;
-        bind_group_builder.push(
-            &mut self.normal,
-            &fallback.normal_texture.view,
-            &fallback.normal_sampler,
-        )?;
-        bind_group_builder.push(
-            &mut self.shininess,
-            &fallback.shininess_texture.view,
-            &fallback.shininess_sampler,
-        )?;
-        bind_group_builder.push(
-            &mut self.dissolve,
-            &fallback.dissolve_texture.view,
-            &fallback.dissolve_sampler,
-        )?;
+        bind_group_builder.push(&mut self.ambient, &fallback.pink.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.diffuse, &fallback.pink.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.specular, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.normal, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.shininess, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.dissolve, &fallback.black.view, &fallback.sampler)?;
 
         let bind_group = backend
             .device

@@ -5,7 +5,10 @@ use std::{
 };
 
 use image::ImageReader;
-use kardashev_protocol::assets::AssetId;
+use kardashev_protocol::assets::{
+    AssetId,
+    TextureFormat,
+};
 
 use crate::assets::{
     dist,
@@ -99,6 +102,7 @@ impl Asset for Texture {
                 UnfinishedTexture {
                     id,
                     label: self.label.clone(),
+                    format: self.format.unwrap_or_default(),
                 },
             )?;
         }
@@ -136,6 +140,7 @@ impl Asset for Texture {
                 build_time: context.build_time,
                 image: filename.clone(),
                 size,
+                format: self.format.unwrap_or_default(),
                 crop: None,
                 u_edge_mode: None,
                 v_edge_mode: None,
@@ -152,4 +157,5 @@ impl Asset for Texture {
 pub struct UnfinishedTexture {
     pub id: AssetId,
     pub label: Option<String>,
+    pub format: TextureFormat,
 }

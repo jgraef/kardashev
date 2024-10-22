@@ -3,7 +3,10 @@ use std::{
     path::PathBuf,
 };
 
-use kardashev_protocol::assets::AssetId;
+use kardashev_protocol::assets::{
+    AssetId,
+    TextureFormat,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -46,6 +49,7 @@ pub struct Texture {
     pub label: Option<String>,
     pub path: PathBuf,
     pub atlas: Option<AtlasDef>,
+    pub format: Option<TextureFormat>,
     pub output_format: Option<TextureFileFormat>,
     pub scale_to: Option<ScaleTo>,
 }
@@ -183,10 +187,13 @@ pub enum AssetIdOrInline<T> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialProperty {
+    Normal,
     Ambient,
     Diffuse,
     Specular,
-    Normal,
     Shininess,
     Dissolve,
+    Albedo,
+    Metalness,
+    Roughness,
 }

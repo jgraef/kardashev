@@ -25,9 +25,9 @@ use crate::{
 #[derive(Debug)]
 pub struct DrawBatcher<I> {
     instance_buffer: InstanceBuffer<I>,
-    entries: HashMap<DrawBatchKey, DrawBatchEntry<I>>,
+    entries: HashMap<BatchKey, BatchEntry<I>>,
     reuse_instance_vecs: Vec<Vec<I>>,
-    batches: Vec<DrawBatch>,
+    items: Vec<BatchItem>,
 }
 
 impl<I> DrawBatcher<I> {
@@ -38,7 +38,7 @@ impl<I> DrawBatcher<I> {
             instance_buffer: InstanceBuffer::new(backend, Self::INITIAL_BUFFER_SIZE),
             entries: HashMap::with_capacity(Self::INITIAL_BUFFER_SIZE),
             reuse_instance_vecs: vec![],
-            batches: vec![],
+            items: vec![],
         }
     }
 
@@ -49,12 +49,12 @@ impl<I> DrawBatcher<I> {
         instance: I,
     ) {
         self.entries
-            .entry(DrawBatchKey {
+            .entry(BatchKey {
                 mesh_id: mesh.get().id(),
                 material_id: material.get().id(),
             })
             .or_insert_with(|| {
-                DrawBatchEntry {
+                BatchEntry {
                     instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
                     mesh: mesh.clone(),
                     material: material.clone(),
@@ -66,14 +66,14 @@ impl<I> DrawBatcher<I> {
 }
 
 impl<I: Pod> DrawBatcher<I> {
-    pub fn draw(&mut self, backend: &Backend, render_pass: &mut wgpu::RenderPass) {
+    pub fn prepare(&mut self, backend: &Backend) -> Option<PreparedBatch> {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
             let start_index = self.instance_buffer.len() as u32;
             self.instance_buffer.extend(entry.instances.drain(..));
             let end_index = self.instance_buffer.len() as u32;
 
-            self.batches.push(DrawBatch {
+            self.items.push(BatchItem {
                 range: start_index..end_index,
                 mesh: entry.mesh,
                 material: entry.material,
@@ -84,50 +84,55 @@ impl<I: Pod> DrawBatcher<I> {
 
         tracing::trace!(
             num_instances = self.instance_buffer.len(),
-            num_batches = self.batches.len(),
-            "drawing batched"
+            num_batches = self.items.len(),
+            "finished batch"
         );
 
-        if self.batches.len() > 0 {
-            // write instance data to gpu
+        if self.items.len() > 0 {
             self.instance_buffer.upload_and_clear(backend);
 
-            // render batches
-            for batch in self.batches.drain(..) {
-                tracing::trace!(?batch.range, "drawing batch");
-
-                let mesh = batch.mesh.get();
-                let material = batch.material.get();
-
-                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.set_bind_group(0, &material.bind_group, &[]);
-                render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch.range);
-            }
+            Some(PreparedBatch {
+                instance_buffer: self.instance_buffer.slice(..),
+                batch_items: self.items.drain(..),
+            })
+        }
+        else {
+            None
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-struct DrawBatchKey {
+struct BatchKey {
     mesh_id: GpuMeshId,
     material_id: GpuMaterialId,
 }
 
 #[derive(Debug)]
-struct DrawBatchEntry<I> {
+struct BatchEntry<I> {
     instances: Vec<I>,
     mesh: Arc<ThreadLocalCell<GpuMesh>>,
     material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
 
 #[derive(Debug)]
-struct DrawBatch {
-    range: Range<u32>,
-    mesh: Arc<ThreadLocalCell<GpuMesh>>,
-    material: Arc<ThreadLocalCell<GpuMaterial>>,
+pub struct BatchItem {
+    pub range: Range<u32>,
+    pub mesh: Arc<ThreadLocalCell<GpuMesh>>,
+    pub material: Arc<ThreadLocalCell<GpuMaterial>>,
+}
+#[derive(Debug)]
+pub struct PreparedBatch<'a> {
+    pub instance_buffer: wgpu::BufferSlice<'a>,
+    batch_items: std::vec::Drain<'a, BatchItem>,
+}
+
+impl<'a> Iterator for PreparedBatch<'a> {
+    type Item = BatchItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.batch_items.next()
+    }
 }
 
 fn create_instance_buffer<I>(backend: &Backend, size: usize) -> wgpu::Buffer {

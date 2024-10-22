@@ -14,10 +14,16 @@ use crate::{
             CameraProjection,
             ClearColor,
         },
+        draw_batch::DrawBatcher,
         light::{
             AmbientLight,
             PointLight,
         },
+        material::{
+            CpuMaterial,
+            Material,
+        },
+        mesh::Mesh,
         render_frame::{
             CreateRenderPass,
             CreateRenderPassContext,
@@ -30,6 +36,8 @@ use crate::{
             srgba_to_wgpu,
             vector3_to_array4,
             wgpu_buffer_size,
+            GpuResourceCache,
+            HasVertexBufferLayout,
         },
         Backend,
         SurfaceSize,
@@ -408,4 +416,152 @@ impl LightUniform {
 struct PointLightUniform {
     pub position: [f32; 4],
     pub color: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[repr(C)]
+pub struct Instance {
+    pub model_transform: [f32; 16],
+    // note: we're using the trick mentioned here[1] to rotate the vertex normal by the rotation of
+    // the model matrix: https://sotrh.github.io/learn-wgpu/intermediate/tutorial10-lighting/#the-normal-matrix
+    //pub normal: [f32; 9],
+}
+
+impl Instance {
+    pub fn from_transform(transform: &GlobalTransform) -> Self {
+        Self {
+            model_transform: transform.as_homogeneous_matrix_array(),
+            /*normal: transform
+            .model_matrix
+            .isometry
+            .rotation
+            .to_rotation_matrix()
+            .matrix()
+            .as_slice()
+            .try_into()
+            .expect("convert rotation matrix to array"),*/
+        }
+    }
+}
+
+impl HasVertexBufferLayout for Instance {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // model transform
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // normal
+                /*wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x3,
+                },*/
+            ],
+        }
+    }
+}
+
+pub fn batch_meshes_with_material<M: CpuMaterial>(
+    pipeline_context: &mut Render3dPipelineContext,
+    material_bind_group_layout: &wgpu::BindGroupLayout,
+    draw_batcher: &mut DrawBatcher<Instance>,
+) {
+    tracing::trace!("batching");
+
+    let mut render_entities = pipeline_context
+        .world
+        .query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
+
+    let gpu_resource_cache = pipeline_context
+        .resources
+        .get_mut_or_insert_default::<GpuResourceCache>();
+
+    for (_entity, (transform, mesh, material)) in render_entities.iter() {
+        //tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
+
+        // handle errors
+
+        let Ok(mesh) = mesh.gpu(&pipeline_context.backend, gpu_resource_cache)
+        else {
+            continue;
+        };
+
+        let Ok(material) = material.gpu(
+            &pipeline_context.backend,
+            gpu_resource_cache,
+            material_bind_group_layout,
+        )
+        else {
+            continue;
+        };
+
+        draw_batcher.push(mesh, material, Instance::from_transform(transform));
+    }
+}
+
+pub fn draw_batched_meshes_with_materials<M: CpuMaterial>(
+    pipeline_context: &mut Render3dPipelineContext,
+    draw_batcher: &mut DrawBatcher<Instance>,
+    instance_buffer_slot: u32,
+    vertex_buffer_slot: u32,
+    material_bind_group_index: u32,
+) {
+    if let Some(prepared_batch) = draw_batcher.prepare(pipeline_context.backend) {
+        pipeline_context
+            .render_pass
+            .set_vertex_buffer(instance_buffer_slot, prepared_batch.instance_buffer);
+
+        for batch_item in prepared_batch {
+            let mesh = batch_item.mesh.get();
+            let material = batch_item.material.get();
+
+            pipeline_context
+                .render_pass
+                .set_vertex_buffer(vertex_buffer_slot, mesh.vertex_buffer.slice(..));
+            pipeline_context
+                .render_pass
+                .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pipeline_context.render_pass.set_bind_group(
+                material_bind_group_index,
+                &material.bind_group,
+                &[],
+            );
+            pipeline_context.render_pass.draw_indexed(
+                0..mesh.num_indices as u32,
+                0,
+                batch_item.range,
+            );
+        }
+    }
 }
