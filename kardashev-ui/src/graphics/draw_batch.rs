@@ -1,36 +1,25 @@
 use std::{
     collections::HashMap,
+    hash::Hash,
     ops::Range,
-    sync::Arc,
 };
 
 use bytemuck::Pod;
 
-use crate::{
-    graphics::{
-        backend::Backend,
-        material::{
-            GpuMaterial,
-            GpuMaterialId,
-        },
-        mesh::{
-            GpuMesh,
-            GpuMeshId,
-        },
-        utils::InstanceBuffer,
-    },
-    utils::thread_local_cell::ThreadLocalCell,
+use crate::graphics::{
+    backend::Backend,
+    utils::InstanceBuffer,
 };
 
 #[derive(Debug)]
-pub struct DrawBatcher<I> {
+pub struct DrawBatcher<K, V, I> {
     instance_buffer: InstanceBuffer<I>,
-    entries: HashMap<BatchKey, BatchEntry<I>>,
+    entries: HashMap<K, BatchEntry<V, I>>,
     reuse_instance_vecs: Vec<Vec<I>>,
-    items: Vec<BatchItem>,
+    items: Vec<BatchItem<V>>,
 }
 
-impl<I> DrawBatcher<I> {
+impl<K, V, I> DrawBatcher<K, V, I> {
     const INITIAL_BUFFER_SIZE: usize = 1024;
 
     pub fn new(backend: &Backend) -> Self {
@@ -41,23 +30,16 @@ impl<I> DrawBatcher<I> {
             items: vec![],
         }
     }
+}
 
-    pub fn push(
-        &mut self,
-        mesh: &Arc<ThreadLocalCell<GpuMesh>>,
-        material: &Arc<ThreadLocalCell<GpuMaterial>>,
-        instance: I,
-    ) {
+impl<K: Eq + Hash, V, I> DrawBatcher<K, V, I> {
+    pub fn push(&mut self, key: K, value: impl FnOnce() -> V, instance: I) {
         self.entries
-            .entry(BatchKey {
-                mesh_id: mesh.get().id(),
-                material_id: material.get().id(),
-            })
+            .entry(key)
             .or_insert_with(|| {
                 BatchEntry {
                     instances: self.reuse_instance_vecs.pop().unwrap_or_default(),
-                    mesh: mesh.clone(),
-                    material: material.clone(),
+                    value: value(),
                 }
             })
             .instances
@@ -65,8 +47,8 @@ impl<I> DrawBatcher<I> {
     }
 }
 
-impl<I: Pod> DrawBatcher<I> {
-    pub fn prepare(&mut self, backend: &Backend) -> Option<PreparedBatch> {
+impl<K, V, I: Pod> DrawBatcher<K, V, I> {
+    pub fn prepare(&mut self, backend: &Backend) -> Option<PreparedBatch<V>> {
         // create instance list
         for (_, mut entry) in self.entries.drain() {
             let start_index = self.instance_buffer.len() as u32;
@@ -75,8 +57,7 @@ impl<I: Pod> DrawBatcher<I> {
 
             self.items.push(BatchItem {
                 range: start_index..end_index,
-                mesh: entry.mesh,
-                material: entry.material,
+                value: entry.value,
             });
 
             self.reuse_instance_vecs.push(entry.instances);
@@ -102,33 +83,25 @@ impl<I: Pod> DrawBatcher<I> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-struct BatchKey {
-    mesh_id: GpuMeshId,
-    material_id: GpuMaterialId,
-}
-
 #[derive(Debug)]
-struct BatchEntry<I> {
+struct BatchEntry<V, I> {
+    value: V,
     instances: Vec<I>,
-    mesh: Arc<ThreadLocalCell<GpuMesh>>,
-    material: Arc<ThreadLocalCell<GpuMaterial>>,
 }
 
 #[derive(Debug)]
-pub struct BatchItem {
+pub struct BatchItem<V> {
     pub range: Range<u32>,
-    pub mesh: Arc<ThreadLocalCell<GpuMesh>>,
-    pub material: Arc<ThreadLocalCell<GpuMaterial>>,
+    pub value: V,
 }
 #[derive(Debug)]
-pub struct PreparedBatch<'a> {
+pub struct PreparedBatch<'a, V> {
     pub instance_buffer: wgpu::BufferSlice<'a>,
-    batch_items: std::vec::Drain<'a, BatchItem>,
+    batch_items: std::vec::Drain<'a, BatchItem<V>>,
 }
 
-impl<'a> Iterator for PreparedBatch<'a> {
-    type Item = BatchItem;
+impl<'a, V> Iterator for PreparedBatch<'a, V> {
+    type Item = BatchItem<V>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.batch_items.next()

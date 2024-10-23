@@ -169,15 +169,10 @@ impl Graphics {
             surface_configuration,
         } = rx_result.await.unwrap()?;
 
-        let (tx_resize, _) = watch::channel(surface_size);
-        let (tx_visible, _) = watch::channel(true);
-
         Ok(Surface {
             backend,
             surface: Arc::new(surface),
             surface_configuration,
-            tx_resize,
-            tx_visible,
         })
     }
 }
@@ -387,7 +382,7 @@ impl leptos::IntoAttribute for WindowHandle {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SurfaceSize {
     pub width: u32,
     pub height: u32,
@@ -407,6 +402,13 @@ impl SurfaceSize {
             height: surface_configuration.height,
         }
     }
+
+    pub fn from_texture(texture: &wgpu::Texture) -> Self {
+        Self {
+            width: texture.width(),
+            height: texture.height(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -414,59 +416,22 @@ pub struct Surface {
     backend: Backend,
     surface: Arc<wgpu::Surface<'static>>,
     surface_configuration: wgpu::SurfaceConfiguration,
-    tx_resize: watch::Sender<SurfaceSize>,
-    tx_visible: watch::Sender<bool>,
 }
 
 impl Surface {
-    pub fn resize(&mut self, surface_size: SurfaceSize) {
-        let _ = self.tx_resize.send(surface_size);
-    }
-
-    pub fn set_visible(&mut self, visible: bool) {
-        let _ = self.tx_visible.send(visible);
-    }
-
-    pub fn size_listener(&self) -> SurfaceSizeListener {
-        SurfaceSizeListener {
-            rx_resize: self.tx_resize.subscribe(),
-        }
-    }
-
-    pub fn visibility_listener(&self) -> SurfaceVisibilityListener {
-        SurfaceVisibilityListener {
-            rx_visible: self.tx_visible.subscribe(),
-        }
-    }
-
     pub fn size(&self) -> SurfaceSize {
-        self.tx_resize.borrow().clone()
+        SurfaceSize::from_surface_configuration(&self.surface_configuration)
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {
         self.surface_configuration.format
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct SurfaceSizeListener {
-    rx_resize: watch::Receiver<SurfaceSize>,
-}
-
-impl SurfaceSizeListener {
-    pub fn get(&self) -> SurfaceSize {
-        self.rx_resize.borrow().clone()
-    }
-
-    pub fn poll(&mut self) -> Option<SurfaceSize> {
-        self.rx_resize
-            .has_changed()
-            .unwrap_or_default()
-            .then(|| self.rx_resize.borrow_and_update().clone())
-    }
-
-    pub async fn wait(&mut self) -> Option<SurfaceSize> {
-        Some(self.rx_resize.wait_for(|_| true).await.ok()?.clone())
+    pub fn resize(&mut self, size: SurfaceSize) {
+        self.surface_configuration.width = size.width;
+        self.surface_configuration.height = size.height;
+        self.surface
+            .configure(&self.backend.device, &self.surface_configuration);
     }
 }
 

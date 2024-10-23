@@ -22,11 +22,11 @@ use crate::{
             MaterialError,
         },
         render_3d::{
-            batch_meshes_with_material,
-            draw_batched_meshes_with_materials,
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
             Instance,
+            MeshMaterialPair,
+            MeshMaterialPairKey,
             Render3dPipeline,
             Render3dPipelineContext,
         },
@@ -42,6 +42,9 @@ use crate::{
     },
 };
 
+#[include_wgsl_oil::include_wgsl_oil("pbr.wgsl")]
+mod shader {}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CreatePbrRenderPipeline;
 
@@ -52,7 +55,10 @@ impl CreateRender3dPipeline for CreatePbrRenderPipeline {
         let shader = context
             .backend
             .device
-            .create_shader_module(wgpu::include_wgsl!("pbr.wgsl"));
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("pbr.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(shader::SOURCE.into()),
+            });
 
         let mut material_bind_group_layout_builder = MaterialBindGroupLayoutBuilder::default();
         for _ in 0..4 {
@@ -136,33 +142,19 @@ impl CreateRender3dPipeline for CreatePbrRenderPipeline {
 pub struct PbrRenderPipeline {
     pipeline: wgpu::RenderPipeline,
     material_bind_group_layout: wgpu::BindGroupLayout,
-    draw_batcher: DrawBatcher<Instance>,
+    draw_batcher: DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
 }
 
 impl Render3dPipeline for PbrRenderPipeline {
     fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
         pipeline_context.render_pass.set_pipeline(&self.pipeline);
-
-        pipeline_context
-            .render_pass
-            .set_bind_group(1, &pipeline_context.camera_bind_group, &[]);
-        pipeline_context
-            .render_pass
-            .set_bind_group(2, &pipeline_context.light_bind_group, &[]);
-
-        batch_meshes_with_material::<PbrMaterial>(
-            pipeline_context,
+        pipeline_context.bind_camera_uniform(1);
+        pipeline_context.bind_light_uniform(2);
+        pipeline_context.batch_meshes_with_material::<PbrMaterial>(
+            &mut self.draw_batcher,
             &self.material_bind_group_layout,
-            &mut self.draw_batcher,
         );
-
-        draw_batched_meshes_with_materials::<PbrMaterial>(
-            pipeline_context,
-            &mut self.draw_batcher,
-            1,
-            0,
-            0,
-        );
+        pipeline_context.draw_batched_meshes_with_materials(&mut self.draw_batcher, 1, 0, 0);
     }
 }
 

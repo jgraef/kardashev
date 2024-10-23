@@ -52,10 +52,17 @@ pub struct ToneMapPass<P> {
 
 impl<P: RenderPass> RenderPass for ToneMapPass<P> {
     fn render(&mut self, context: &mut RenderPassContext) {
+        self.staging.resize_if_needed(
+            context.backend,
+            context.target_size,
+            &self.tone_mapping.bind_group_layout,
+        );
+
         self.inner.render(&mut RenderPassContext {
             backend: context.backend,
             encoder: context.encoder,
             target_view: &self.staging.view,
+            target_size: context.target_size,
             render_target_entity: context.render_target_entity,
             world: context.world,
             resources: context.resources,
@@ -81,12 +88,6 @@ impl<P: RenderPass> RenderPass for ToneMapPass<P> {
         render_pass.set_pipeline(&self.tone_mapping.pipeline);
         render_pass.set_bind_group(0, &self.staging.bind_group, &[]);
         render_pass.draw(0..3, 0..1);
-    }
-
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
-        self.inner.resize(backend, surface_size);
-        self.staging
-            .resize(backend, surface_size, &self.tone_mapping.bind_group_layout);
     }
 }
 
@@ -133,6 +134,18 @@ impl StagingTexture {
         self.view = view;
         self.bind_group =
             create_staging_bind_group(backend, &self.view, &self.sampler, bind_group_layout);
+    }
+
+    fn resize_if_needed(
+        &mut self,
+        backend: &Backend,
+        size: SurfaceSize,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) {
+        if SurfaceSize::from_texture(&self.texture) != size {
+            tracing::debug!(?size, "resizing staging texture");
+            self.resize(backend, size, bind_group_layout);
+        }
     }
 }
 

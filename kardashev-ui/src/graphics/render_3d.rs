@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use bytemuck::{
     Pod,
@@ -21,9 +24,15 @@ use crate::{
         },
         material::{
             CpuMaterial,
+            GpuMaterial,
+            GpuMaterialId,
             Material,
         },
-        mesh::Mesh,
+        mesh::{
+            GpuMesh,
+            GpuMeshId,
+            Mesh,
+        },
         render_frame::{
             CreateRenderPass,
             CreateRenderPassContext,
@@ -42,9 +51,12 @@ use crate::{
         Backend,
         SurfaceSize,
     },
-    utils::time::{
-        Instant,
-        TicksPerSecond,
+    utils::{
+        thread_local_cell::ThreadLocalCell,
+        time::{
+            Instant,
+            TicksPerSecond,
+        },
     },
 };
 
@@ -184,6 +196,9 @@ pub struct Render3dPass<P> {
 
 impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
     fn render(&mut self, context: &mut RenderPassContext) {
+        self.depth_texture
+            .resize_if_needed(context.target_size, context.backend);
+
         let mut query_camera = context
             .world
             .query_one::<(Option<&ClearColor>, &GlobalTransform, &CameraProjection)>(
@@ -266,10 +281,6 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
             tracing::warn!("entity with RenderTarget component is missing other camera components");
         }
     }
-
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
-        self.depth_texture = DepthTexture::new(backend, surface_size);
-    }
 }
 
 pub trait CreateRender3dPipeline {
@@ -299,6 +310,98 @@ pub struct Render3dPipelineContext<'a> {
     pub light_bind_group: &'a wgpu::BindGroup,
     pub world: &'a hecs::World,
     pub resources: &'a mut Resources,
+}
+
+impl<'a> Render3dPipelineContext<'a> {
+    pub fn bind_camera_uniform(&mut self, bind_group_index: u32) {
+        self.render_pass
+            .set_bind_group(bind_group_index, &self.camera_bind_group, &[]);
+    }
+
+    pub fn bind_light_uniform(&mut self, bind_group_index: u32) {
+        self.render_pass
+            .set_bind_group(bind_group_index, &self.light_bind_group, &[]);
+    }
+
+    pub fn batch_meshes_with_material<M: CpuMaterial>(
+        &mut self,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
+        material_bind_group_layout: &wgpu::BindGroupLayout,
+    ) {
+        tracing::trace!("batching");
+
+        let mut render_entities = self
+            .world
+            .query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
+
+        let gpu_resource_cache = self
+            .resources
+            .get_mut_or_insert_default::<GpuResourceCache>();
+
+        for (_entity, (transform, mesh, material)) in render_entities.iter() {
+            //tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
+
+            // handle errors
+
+            let Ok(mesh) = mesh.gpu(&self.backend, gpu_resource_cache)
+            else {
+                continue;
+            };
+
+            let Ok(material) = material.gpu(
+                &self.backend,
+                gpu_resource_cache,
+                material_bind_group_layout,
+            )
+            else {
+                continue;
+            };
+
+            draw_batcher.push(
+                MeshMaterialPairKey {
+                    mesh: mesh.get().id(),
+                    material: material.get().id(),
+                },
+                || {
+                    MeshMaterialPair {
+                        mesh: mesh.clone(),
+                        material: material.clone(),
+                    }
+                },
+                Instance::from_transform(transform),
+            );
+        }
+    }
+
+    pub fn draw_batched_meshes_with_materials(
+        &mut self,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
+        instance_buffer_slot: u32,
+        vertex_buffer_slot: u32,
+        material_bind_group_index: u32,
+    ) {
+        if let Some(prepared_batch) = draw_batcher.prepare(self.backend) {
+            self.render_pass
+                .set_vertex_buffer(instance_buffer_slot, prepared_batch.instance_buffer);
+
+            for batch_item in prepared_batch {
+                let mesh = batch_item.value.mesh.get();
+                let material = batch_item.value.material.get();
+
+                self.render_pass
+                    .set_vertex_buffer(vertex_buffer_slot, mesh.vertex_buffer.slice(..));
+                self.render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                self.render_pass.set_bind_group(
+                    material_bind_group_index,
+                    &material.bind_group,
+                    &[],
+                );
+                self.render_pass
+                    .draw_indexed(0..mesh.num_indices as u32, 0, batch_item.range);
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -335,6 +438,13 @@ impl DepthTexture {
         Self {
             texture,
             texture_view,
+        }
+    }
+
+    pub fn resize_if_needed(&mut self, size: SurfaceSize, backend: &Backend) {
+        if SurfaceSize::from_texture(&self.texture) != size {
+            tracing::debug!(?size, "resizing depth texture");
+            *self = DepthTexture::new(backend, size);
         }
     }
 }
@@ -492,76 +602,14 @@ impl HasVertexBufferLayout for Instance {
     }
 }
 
-pub fn batch_meshes_with_material<M: CpuMaterial>(
-    pipeline_context: &mut Render3dPipelineContext,
-    material_bind_group_layout: &wgpu::BindGroupLayout,
-    draw_batcher: &mut DrawBatcher<Instance>,
-) {
-    tracing::trace!("batching");
-
-    let mut render_entities = pipeline_context
-        .world
-        .query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
-
-    let gpu_resource_cache = pipeline_context
-        .resources
-        .get_mut_or_insert_default::<GpuResourceCache>();
-
-    for (_entity, (transform, mesh, material)) in render_entities.iter() {
-        //tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
-
-        // handle errors
-
-        let Ok(mesh) = mesh.gpu(&pipeline_context.backend, gpu_resource_cache)
-        else {
-            continue;
-        };
-
-        let Ok(material) = material.gpu(
-            &pipeline_context.backend,
-            gpu_resource_cache,
-            material_bind_group_layout,
-        )
-        else {
-            continue;
-        };
-
-        draw_batcher.push(mesh, material, Instance::from_transform(transform));
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MeshMaterialPairKey {
+    pub mesh: GpuMeshId,
+    pub material: GpuMaterialId,
 }
 
-pub fn draw_batched_meshes_with_materials<M: CpuMaterial>(
-    pipeline_context: &mut Render3dPipelineContext,
-    draw_batcher: &mut DrawBatcher<Instance>,
-    instance_buffer_slot: u32,
-    vertex_buffer_slot: u32,
-    material_bind_group_index: u32,
-) {
-    if let Some(prepared_batch) = draw_batcher.prepare(pipeline_context.backend) {
-        pipeline_context
-            .render_pass
-            .set_vertex_buffer(instance_buffer_slot, prepared_batch.instance_buffer);
-
-        for batch_item in prepared_batch {
-            let mesh = batch_item.mesh.get();
-            let material = batch_item.material.get();
-
-            pipeline_context
-                .render_pass
-                .set_vertex_buffer(vertex_buffer_slot, mesh.vertex_buffer.slice(..));
-            pipeline_context
-                .render_pass
-                .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pipeline_context.render_pass.set_bind_group(
-                material_bind_group_index,
-                &material.bind_group,
-                &[],
-            );
-            pipeline_context.render_pass.draw_indexed(
-                0..mesh.num_indices as u32,
-                0,
-                batch_item.range,
-            );
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct MeshMaterialPair {
+    pub mesh: Arc<ThreadLocalCell<GpuMesh>>,
+    pub material: Arc<ThreadLocalCell<GpuMaterial>>,
 }

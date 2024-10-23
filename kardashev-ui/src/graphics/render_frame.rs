@@ -10,11 +10,17 @@ use crate::{
         Label,
     },
     graphics::{
-        camera::RenderTarget,
+        camera::{
+            DontRender,
+            RenderTarget,
+            RenderTargetInner,
+        },
         Backend,
         Error,
+        Surface,
         SurfaceSize,
     },
+    utils::thread_local_cell::ThreadLocalCell,
 };
 
 #[derive(Debug, Default)]
@@ -30,59 +36,84 @@ impl System for RenderingSystem {
     fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
         let mut render_targets = system_context
             .world
-            .query::<(&mut RenderTarget, Option<&Label>)>();
+            .query::<(&RenderTarget, &mut AttachedRenderPass, Option<&Label>)>()
+            .without::<&DontRender>();
 
-        for (render_target_entity, (render_target, label)) in render_targets.iter() {
-            let render_target = render_target.inner.get_mut();
-
-            if let Some(surface_size) = render_target.surface_size_listener.poll() {
-                tracing::debug!(?label, ?surface_size, "surface resized");
-                render_target.resize(surface_size);
-            }
-
-            if !render_target.is_visible() {
-                tracing::debug!(?label, "skipping render target (not visible)");
-                continue;
-            }
-
-            tracing::trace!(?label, "rendering frame");
-
-            let target_texture = render_target
-                .surface
-                .get_current_texture()
-                .expect("could not get target texture");
-
-            let target_view = target_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-
-            let mut encoder = render_target.backend.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
-                    label: Some("render encoder"),
-                },
-            );
-
-            render_target.render_pass.render(&mut RenderPassContext {
-                backend: &render_target.backend,
-                encoder: &mut encoder,
-                target_view: &target_view,
-                render_target_entity,
-                world: &system_context.world,
-                resources: &mut system_context.resources,
-            });
-
-            render_target.backend.queue.submit([encoder.finish()]);
-            target_texture.present();
+        for (render_target_entity, (render_target, render_pass, label)) in render_targets.iter() {
+            match render_target.inner.get() {
+                RenderTargetInner::Surface { backend, surface } => {
+                    let surface_texture = surface
+                        .get_current_texture()
+                        .expect("could not get target texture");
+                    render_to_texture(
+                        backend,
+                        render_pass,
+                        &surface_texture.texture,
+                        render_target_entity,
+                        &system_context.world,
+                        &mut system_context.resources,
+                        label,
+                    );
+                    surface_texture.present();
+                }
+                RenderTargetInner::Texture { backend, texture } => {
+                    render_to_texture(
+                        backend,
+                        render_pass,
+                        texture,
+                        render_target_entity,
+                        &system_context.world,
+                        &mut system_context.resources,
+                        label,
+                    );
+                }
+            };
         }
 
         Ok(())
     }
 }
 
-pub trait CreateRenderPass {
+fn render_to_texture(
+    backend: &Backend,
+    render_pass: &mut AttachedRenderPass,
+    texture: &wgpu::Texture,
+    render_target_entity: hecs::Entity,
+    world: &hecs::World,
+    resources: &mut Resources,
+    label: Option<&Label>,
+) {
+    tracing::debug!(?label, "rendering frame");
+    let target_size = SurfaceSize::from_texture(texture);
+    let target_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder = backend
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("render encoder"),
+        });
+
+    render_pass.render(&mut RenderPassContext {
+        backend: &backend,
+        encoder: &mut encoder,
+        target_view: &target_view,
+        target_size,
+        render_target_entity,
+        world,
+        resources,
+    });
+
+    backend.queue.submit([encoder.finish()]);
+}
+
+pub trait CreateRenderPass: Sized {
     type RenderPass: RenderPass;
 
     fn create_render_pass(self, context: &CreateRenderPassContext) -> Self::RenderPass;
+
+    fn create_render_pass_from_surface(self, surface: &Surface) -> Self::RenderPass {
+        self.create_render_pass(&CreateRenderPassContext::from_surface(surface))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -92,10 +123,18 @@ pub struct CreateRenderPassContext<'a> {
     pub surface_format: wgpu::TextureFormat,
 }
 
+impl<'a> CreateRenderPassContext<'a> {
+    pub fn from_surface(surface: &'a Surface) -> Self {
+        Self {
+            backend: &surface.backend,
+            surface_size: surface.size(),
+            surface_format: surface.format(),
+        }
+    }
+}
+
 pub trait RenderPass {
     fn render(&mut self, context: &mut RenderPassContext);
-
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize);
 }
 
 // todo: impl Debug
@@ -103,35 +142,33 @@ pub struct RenderPassContext<'a> {
     pub backend: &'a Backend,
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub target_view: &'a wgpu::TextureView,
+    pub target_size: SurfaceSize,
     pub render_target_entity: hecs::Entity,
     pub world: &'a hecs::World,
     pub resources: &'a mut Resources,
 }
 
-pub struct DynRenderPass {
-    inner: Box<dyn RenderPass>,
+pub struct AttachedRenderPass {
+    inner: ThreadLocalCell<Box<dyn RenderPass>>,
 }
 
-impl DynRenderPass {
+impl AttachedRenderPass {
     pub fn new(render_pass: impl RenderPass + 'static) -> Self {
-        DynRenderPass {
-            inner: Box::new(render_pass),
+        Self {
+            inner: ThreadLocalCell::new(Box::new(render_pass)),
         }
     }
 }
 
-impl Debug for DynRenderPass {
+impl Debug for AttachedRenderPass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BoxedRenderPass").finish_non_exhaustive()
+        f.debug_struct("AttachedRenderPass").finish_non_exhaustive()
     }
 }
 
-impl RenderPass for DynRenderPass {
+impl RenderPass for AttachedRenderPass {
     fn render(&mut self, render_pass_context: &mut RenderPassContext) {
-        self.inner.render(render_pass_context);
-    }
-
-    fn resize(&mut self, backend: &Backend, surface_size: SurfaceSize) {
-        self.inner.resize(backend, surface_size);
+        let inner = self.inner.get_mut();
+        inner.render(render_pass_context);
     }
 }

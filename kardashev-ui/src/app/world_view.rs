@@ -15,7 +15,10 @@ use nalgebra::{
     Vector3,
 };
 use palette::WithAlpha;
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc,
+    watch,
+};
 
 use crate::{
     app::components::window::{
@@ -43,9 +46,14 @@ use crate::{
         camera::{
             CameraProjection,
             ClearColor,
+            DontRender,
             RenderTarget,
         },
         hdr::CreateToneMapPass,
+        pbr::{
+            CreatePbrRenderPipeline,
+            PbrRenderPipeline,
+        },
         render_3d::{
             CreateRender3dPass,
             CreateRender3dPipeline,
@@ -53,11 +61,19 @@ use crate::{
             Render3dPipeline,
             Render3dPipelineContext,
         },
+        render_frame::{
+            AttachedRenderPass,
+            CreateRenderPass,
+        },
         transform::Transform,
         Surface,
     },
     input::{
-        keyboard::KeyboardInput,
+        keyboard::{
+            KeyCode,
+            KeyboardEvent,
+            KeyboardInput,
+        },
         mouse::{
             MouseButton,
             MouseEvent,
@@ -73,21 +89,26 @@ struct Style;
 pub fn WorldView() -> impl IntoView {
     let camera_entity = store_value(None);
     let (tx_mouse, rx_mouse) = mpsc::channel(128);
+    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::BlinnPhong);
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
 
-        let render_target = RenderTarget::new(
-            surface,
-            CreateToneMapPass {
-                inner: CreateRender3dPass {
-                    create_pipeline: CreateWorldViewPipeline,
-                },
-                format: wgpu::TextureFormat::Rgba16Float,
-            },
-        );
         let surface_size = surface.size();
         let aspect = (surface_size.width as f32) / (surface_size.height as f32);
+
+        let render_target = RenderTarget::from_surface(surface);
+        let render_pass = AttachedRenderPass::new(
+            CreateToneMapPass {
+                inner: CreateRender3dPass {
+                    create_pipeline: CreateWorldViewPipeline {
+                        switch: rx_pipeline_switch,
+                    },
+                },
+                format: wgpu::TextureFormat::Rgba16Float,
+            }
+            .create_render_pass_from_surface(&surface),
+        );
 
         let world = expect_context::<WorldServer>();
         let _ = world.run(move |system_context| {
@@ -105,8 +126,10 @@ pub fn WorldView() -> impl IntoView {
                         .clone(),
                     state: Default::default(),
                     z_mouse: 10.0,
+                    switch_pipeline: tx_pipeline_switch,
                 },
                 render_target,
+                render_pass,
             ));
 
             camera_entity.set_value(Some(entity));
@@ -131,7 +154,25 @@ pub fn WorldView() -> impl IntoView {
                     });
                 }
             }
-            WindowEvent::Visibility { .. } => {}
+            WindowEvent::Visibility { visible } => {
+                if let Some(camera_entity) = camera_entity.get_value() {
+                    let world = expect_context::<WorldServer>();
+                    let _ = world.run(move |system_context| {
+                        if visible {
+                            system_context
+                                .world
+                                .remove_one::<DontRender>(camera_entity)
+                                .unwrap();
+                        }
+                        else {
+                            system_context
+                                .world
+                                .insert_one(camera_entity, DontRender)
+                                .unwrap();
+                        }
+                    });
+                }
+            }
         }
     };
 
@@ -154,30 +195,55 @@ pub fn WorldView() -> impl IntoView {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct CreateWorldViewPipeline;
+#[derive(Clone, Debug)]
+struct CreateWorldViewPipeline {
+    switch: watch::Receiver<WhichPipeline>,
+}
 
 impl CreateRender3dPipeline for CreateWorldViewPipeline {
     type Pipeline = WorldViewPipeline;
 
     fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> WorldViewPipeline {
         WorldViewPipeline {
-            pbr: CreateBlinnPhongRenderPipeline.create_pipeline(context),
-            //stars: RenderStarPipeline::create_pipeline(pipeline_context),
+            switch: self.switch,
+            pbr: CreatePbrRenderPipeline.create_pipeline(context),
+            blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(context),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WhichPipeline {
+    Pbr,
+    BlinnPhong,
+}
+
+impl WhichPipeline {
+    pub fn toggle(&mut self) {
+        *self = match *self {
+            WhichPipeline::Pbr => WhichPipeline::BlinnPhong,
+            WhichPipeline::BlinnPhong => WhichPipeline::Pbr,
+        };
     }
 }
 
 #[derive(Debug)]
 struct WorldViewPipeline {
-    pbr: BlinnPhongRenderPipeline,
-    //stars: RenderStarPipeline,
+    switch: watch::Receiver<WhichPipeline>,
+    pbr: PbrRenderPipeline,
+    blinn_phong: BlinnPhongRenderPipeline,
 }
 
 impl Render3dPipeline for WorldViewPipeline {
     fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
-        self.pbr.render(pipeline_context);
-        //self.stars.render(pipeline_context);
+        match *self.switch.borrow() {
+            WhichPipeline::Pbr => {
+                self.pbr.render(pipeline_context);
+            }
+            WhichPipeline::BlinnPhong => {
+                self.blinn_phong.render(pipeline_context);
+            }
+        }
     }
 }
 
@@ -187,6 +253,7 @@ struct WorldViewCameraController {
     keyboard_input: KeyboardInput,
     state: InputState,
     z_mouse: f32,
+    switch_pipeline: watch::Sender<WhichPipeline>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -207,37 +274,57 @@ impl System for WorldViewCameraControllerSystem {
         )>();
 
         for (_entity, (controller, camera_transform, camera_projection)) in query {
-            match controller.mouse_input.try_recv() {
-                Ok(event) => {
-                    controller.state.mouse.push(&event);
+            loop {
+                match controller.mouse_input.try_recv() {
+                    Ok(event) => {
+                        controller.state.mouse.push(&event);
 
-                    match event {
-                        MouseEvent::Move { delta, .. } => {
-                            if controller.state.mouse.buttons.is_down(MouseButton::Left) {
-                                let world_delta =
-                                    camera_projection.projection_matrix.unproject_point(
-                                        &Point3::new(delta.x, -delta.y, controller.z_mouse),
+                        match event {
+                            MouseEvent::Move { delta, .. } => {
+                                if controller.state.mouse.buttons.is_down(MouseButton::Left) {
+                                    let world_delta =
+                                        camera_projection.projection_matrix.unproject_point(
+                                            &Point3::new(delta.x, -delta.y, controller.z_mouse),
+                                        );
+                                    camera_transform.model_matrix *= Translation3::from(
+                                        Vector3::new(world_delta.x, world_delta.y, 0.0),
                                     );
-                                camera_transform.model_matrix *= Translation3::from(Vector3::new(
-                                    world_delta.x,
-                                    world_delta.y,
-                                    0.0,
-                                ));
-                            }
+                                }
 
-                            if controller.state.mouse.buttons.is_down(MouseButton::Right) {
-                                // todo
+                                if controller.state.mouse.buttons.is_down(MouseButton::Right) {
+                                    // todo
+                                }
                             }
+                            MouseEvent::Wheel { delta, .. } => {
+                                tracing::debug!(y = delta.y, "wheel");
+                                camera_transform.model_matrix *=
+                                    Translation3::from(Vector3::new(0.0, 0.0, delta.y / 1000.0));
+                            }
+                            _ => {}
                         }
-                        MouseEvent::Wheel { delta, .. } => {
-                            tracing::debug!(y = delta.y, "wheel");
-                            camera_transform.model_matrix *=
-                                Translation3::from(Vector3::new(0.0, 0.0, delta.y / 1000.0));
-                        }
-                        _ => {}
                     }
+                    Err(_) => break,
                 }
-                Err(_) => {}
+            }
+
+            loop {
+                match controller.keyboard_input.try_next() {
+                    Some(event) => {
+                        match event {
+                            KeyboardEvent::KeyDown {
+                                code: KeyCode::F9,
+                                repeat: false,
+                                ..
+                            } => {
+                                controller
+                                    .switch_pipeline
+                                    .send_modify(|which| which.toggle());
+                            }
+                            _ => {}
+                        }
+                    }
+                    None => break,
+                }
             }
         }
 

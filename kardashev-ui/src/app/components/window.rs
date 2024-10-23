@@ -135,20 +135,10 @@ where
     let is_visible = Signal::derive(move || {
         element_visibility.get() && document_visibility.get() == VisibilityState::Visible
     });
-    create_effect(move |old_value| {
-        let new_value = is_visible.get();
-
-        if old_value.map_or(true, |v| v != new_value) {
-            surface_handle.update_value(|surface| {
-                if let Some(surface) = surface {
-                    surface.set_visible(new_value);
-                }
-            });
-
-            on_event(WindowEvent::Visibility { visible: new_value });
-        }
-
-        new_value
+    create_effect(move |_| {
+        on_event(WindowEvent::Visibility {
+            visible: is_visible.get(),
+        });
     });
 
     view! {

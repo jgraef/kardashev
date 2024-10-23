@@ -12,16 +12,7 @@ use palette::{
 use crate::{
     graphics::{
         backend::Backend,
-        render_frame::{
-            CreateRenderPass,
-            CreateRenderPassContext,
-            DynRenderPass,
-            RenderPass,
-        },
         Surface,
-        SurfaceSize,
-        SurfaceSizeListener,
-        SurfaceVisibilityListener,
     },
     utils::thread_local_cell::ThreadLocalCell,
 };
@@ -86,47 +77,33 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    pub fn new<P: CreateRenderPass + 'static>(surface: &Surface, create_render_pass: P) -> Self {
+    pub fn from_surface(surface: &Surface) -> Self {
         Self {
-            inner: ThreadLocalCell::new(RenderTargetInner {
-                surface: surface.surface.clone(),
-                surface_configuration: surface.surface_configuration.clone(),
-                surface_size_listener: surface.size_listener(),
-                surface_visibility_listener: surface.visibility_listener(),
+            inner: ThreadLocalCell::new(RenderTargetInner::Surface {
                 backend: surface.backend.clone(),
-                render_pass: DynRenderPass::new(create_render_pass.create_render_pass(
-                    &CreateRenderPassContext {
-                        backend: &surface.backend,
-                        surface_size: surface.size(),
-                        surface_format: surface.format(),
-                    },
-                )),
+                surface: surface.surface.clone(),
             }),
+        }
+    }
+
+    pub fn from_texture(backend: Backend, texture: Arc<wgpu::Texture>) -> Self {
+        Self {
+            inner: ThreadLocalCell::new(RenderTargetInner::Texture { backend, texture }),
         }
     }
 }
 
 #[derive(Debug)]
-pub(super) struct RenderTargetInner {
-    pub surface: Arc<wgpu::Surface<'static>>,
-    pub surface_configuration: wgpu::SurfaceConfiguration,
-    pub surface_size_listener: SurfaceSizeListener,
-    pub surface_visibility_listener: SurfaceVisibilityListener,
-    pub backend: Backend,
-    pub render_pass: DynRenderPass,
+pub(super) enum RenderTargetInner {
+    Surface {
+        backend: Backend,
+        surface: Arc<wgpu::Surface<'static>>,
+    },
+    Texture {
+        backend: Backend,
+        texture: Arc<wgpu::Texture>,
+    },
 }
 
-impl RenderTargetInner {
-    pub fn is_visible(&self) -> bool {
-        self.surface_visibility_listener.is_visible()
-    }
-
-    pub fn resize(&mut self, surface_size: SurfaceSize) {
-        self.surface_configuration.width = surface_size.width;
-        self.surface_configuration.height = surface_size.height;
-        self.surface
-            .configure(&self.backend.device, &self.surface_configuration);
-
-        self.render_pass.resize(&self.backend, surface_size);
-    }
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DontRender;
