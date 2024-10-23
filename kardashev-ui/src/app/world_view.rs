@@ -31,13 +31,9 @@ use crate::{
             RegisterPluginContext,
         },
         server::WorldServer,
-        system::{
-            System,
-            SystemContext,
-        },
+        system::SystemContext,
         Label,
     },
-    error::Error,
     graphics::{
         blinn_phong::{
             BlinnPhongRenderPipeline,
@@ -253,79 +249,67 @@ struct WorldViewCameraController {
     switch_pipeline: watch::Sender<WhichPipeline>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct WorldViewCameraControllerSystem;
+fn world_view_camera_controller_system(system_context: &mut SystemContext) {
+    let query = system_context.world.query_mut::<(
+        &mut WorldViewCameraController,
+        &mut Transform,
+        &CameraProjection,
+    )>();
 
-impl System for WorldViewCameraControllerSystem {
-    type Error = Error;
+    for (_entity, (controller, camera_transform, camera_projection)) in query {
+        loop {
+            match controller.mouse_input.try_recv() {
+                Ok(event) => {
+                    controller.state.mouse.push(&event);
 
-    fn label(&self) -> &'static str {
-        "map-camera-controller"
-    }
-
-    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
-        let query = system_context.world.query_mut::<(
-            &mut WorldViewCameraController,
-            &mut Transform,
-            &CameraProjection,
-        )>();
-
-        for (_entity, (controller, camera_transform, camera_projection)) in query {
-            loop {
-                match controller.mouse_input.try_recv() {
-                    Ok(event) => {
-                        controller.state.mouse.push(&event);
-
-                        match event {
-                            MouseEvent::Move { delta, .. } => {
-                                if controller.state.mouse.buttons.is_down(MouseButton::Left) {
-                                    let world_delta =
-                                        camera_projection.projection_matrix.unproject_point(
-                                            &Point3::new(delta.x, -delta.y, controller.z_mouse),
-                                        );
-                                    camera_transform.model_matrix *= Translation3::from(
-                                        Vector3::new(world_delta.x, world_delta.y, 0.0),
+                    match event {
+                        MouseEvent::Move { delta, .. } => {
+                            if controller.state.mouse.buttons.is_down(MouseButton::Left) {
+                                let world_delta =
+                                    camera_projection.projection_matrix.unproject_point(
+                                        &Point3::new(delta.x, -delta.y, controller.z_mouse),
                                     );
-                                }
+                                camera_transform.model_matrix *= Translation3::from(Vector3::new(
+                                    world_delta.x,
+                                    world_delta.y,
+                                    0.0,
+                                ));
+                            }
 
-                                if controller.state.mouse.buttons.is_down(MouseButton::Right) {
-                                    // todo
-                                }
+                            if controller.state.mouse.buttons.is_down(MouseButton::Right) {
+                                // todo
                             }
-                            MouseEvent::Wheel { delta, .. } => {
-                                tracing::debug!(y = delta.y, "wheel");
-                                camera_transform.model_matrix *=
-                                    Translation3::from(Vector3::new(0.0, 0.0, delta.y / 1000.0));
-                            }
-                            _ => {}
                         }
-                    }
-                    Err(_) => break,
-                }
-            }
-
-            loop {
-                match controller.keyboard_input.try_next() {
-                    Some(event) => {
-                        match event {
-                            KeyboardEvent::KeyDown {
-                                code: KeyCode::F9,
-                                repeat: false,
-                                ..
-                            } => {
-                                controller
-                                    .switch_pipeline
-                                    .send_modify(|which| which.toggle());
-                            }
-                            _ => {}
+                        MouseEvent::Wheel { delta, .. } => {
+                            camera_transform.model_matrix *=
+                                Translation3::from(Vector3::new(0.0, 0.0, delta.y / 1000.0));
                         }
+                        _ => {}
                     }
-                    None => break,
                 }
+                Err(_) => break,
             }
         }
 
-        Ok(())
+        loop {
+            match controller.keyboard_input.try_next() {
+                Some(event) => {
+                    match event {
+                        KeyboardEvent::KeyDown {
+                            code: KeyCode::F9,
+                            repeat: false,
+                            ..
+                        } => {
+                            controller
+                                .switch_pipeline
+                                .send_modify(|which| which.toggle());
+                        }
+                        _ => {}
+                    }
+                }
+                None => break,
+            }
+        }
     }
 }
 
@@ -333,6 +317,8 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn register(self, context: RegisterPluginContext) {
-        context.schedule.add_system(WorldViewCameraControllerSystem);
+        context
+            .schedule
+            .add_system(world_view_camera_controller_system);
     }
 }

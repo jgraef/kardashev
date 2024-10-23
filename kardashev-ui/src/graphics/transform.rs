@@ -6,15 +6,9 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::{
-    ecs::{
-        server::Tick,
-        system::{
-            System,
-            SystemContext,
-        },
-    },
-    graphics::Error,
+use crate::ecs::{
+    server::Tick,
+    system::SystemContext,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -53,90 +47,76 @@ pub struct Parent {
     pub entity: Entity,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LocalToGlobalTransformSystem;
+pub fn local_to_global_transform_system(system_context: &mut SystemContext) {
+    fn local_to_global(
+        entity: Entity,
+        local: &Transform,
+        global: Option<&mut GlobalTransform>,
+        parent: Option<&Parent>,
+        tick: Tick,
+        world: &hecs::World,
+        mut command_buffer: &mut hecs::CommandBuffer,
+    ) {
+        let mut new_global = None;
+        let global = global.unwrap_or_else(|| {
+            new_global = Some(GlobalTransform::default());
+            new_global.as_mut().unwrap()
+        });
 
-impl System for LocalToGlobalTransformSystem {
-    type Error = Error;
+        if global
+            .tick_last_updated
+            .map_or(false, |tick_last_updated| tick_last_updated >= tick)
+        {
+            return;
+        }
 
-    fn label(&self) -> &'static str {
-        "local-to-global-transform"
+        if let Some(parent) = parent {
+            let mut parent_query = world
+                .query_one::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>(
+                    parent.entity,
+                )
+                .unwrap();
+
+            global.tick_last_updated = Some(tick);
+
+            if let Some((parent_local, mut parent_global, parent_parent)) = parent_query.get() {
+                local_to_global(
+                    parent.entity,
+                    parent_local,
+                    parent_global.as_deref_mut(),
+                    parent_parent,
+                    tick,
+                    world,
+                    &mut command_buffer,
+                );
+
+                global.model_matrix =
+                    local.model_matrix * parent_global.as_ref().unwrap().model_matrix;
+            }
+        }
+        else {
+            global.model_matrix = local.model_matrix;
+            global.tick_last_updated = Some(tick);
+        }
+
+        if let Some(global) = new_global {
+            command_buffer.insert(entity, (global,));
+        }
     }
 
-    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
-        fn local_to_global(
-            entity: Entity,
-            local: &Transform,
-            global: Option<&mut GlobalTransform>,
-            parent: Option<&Parent>,
-            tick: Tick,
-            world: &hecs::World,
-            mut command_buffer: &mut hecs::CommandBuffer,
-        ) {
-            let mut new_global = None;
-            let global = global.unwrap_or_else(|| {
-                new_global = Some(GlobalTransform::default());
-                new_global.as_mut().unwrap()
-            });
+    let mut query = system_context
+        .world
+        .query::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>();
 
-            if global
-                .tick_last_updated
-                .map_or(false, |tick_last_updated| tick_last_updated >= tick)
-            {
-                return;
-            }
-
-            if let Some(parent) = parent {
-                let mut parent_query = world
-                    .query_one::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>(
-                        parent.entity,
-                    )
-                    .unwrap();
-
-                global.tick_last_updated = Some(tick);
-
-                if let Some((parent_local, mut parent_global, parent_parent)) = parent_query.get() {
-                    local_to_global(
-                        parent.entity,
-                        parent_local,
-                        parent_global.as_deref_mut(),
-                        parent_parent,
-                        tick,
-                        world,
-                        &mut command_buffer,
-                    );
-
-                    global.model_matrix =
-                        local.model_matrix * parent_global.as_ref().unwrap().model_matrix;
-                }
-            }
-            else {
-                global.model_matrix = local.model_matrix;
-                global.tick_last_updated = Some(tick);
-            }
-
-            if let Some(global) = new_global {
-                command_buffer.insert(entity, (global,));
-            }
-        }
-
-        let mut query =
-            system_context
-                .world
-                .query::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>();
-
-        for (entity, (local, global, parent)) in query.iter() {
-            local_to_global(
-                entity,
-                local,
-                global,
-                parent,
-                system_context.tick,
-                &system_context.world,
-                &mut system_context.command_buffer,
-            );
-        }
-
-        Ok(())
+    for (entity, (local, global, parent)) in query.iter() {
+        local_to_global(
+            entity,
+            local,
+            global,
+            parent,
+            system_context.tick,
+            &system_context.world,
+            &mut system_context.command_buffer,
+        );
     }
 }

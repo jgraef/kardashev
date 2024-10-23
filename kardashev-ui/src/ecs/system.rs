@@ -1,4 +1,8 @@
-use std::fmt::Debug;
+use std::{
+    any::type_name,
+    convert::Infallible,
+    fmt::Debug,
+};
 
 use super::Resources;
 use crate::ecs::server::Tick;
@@ -19,7 +23,9 @@ impl<'c> SystemContext<'c> {
 pub trait System: Sized + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn label(&self) -> &'static str;
+    fn label(&self) -> &'static str {
+        type_name::<Self>()
+    }
 
     fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error>;
 
@@ -93,4 +99,24 @@ impl<T: System> DynSystemTrait for T {
 #[error("{error}")]
 pub struct DynSystemError {
     error: Box<dyn std::error::Error + Send + Sync + 'static>,
+}
+
+impl DynSystemError {
+    pub fn custom(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self {
+            error: Box::new(error),
+        }
+    }
+}
+
+impl<F> System for F
+where
+    F: FnMut(&mut SystemContext<'_>) + Send + Sync + 'static,
+{
+    type Error = Infallible;
+
+    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
+        self(system_context);
+        Ok(())
+    }
 }

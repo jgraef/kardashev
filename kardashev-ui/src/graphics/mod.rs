@@ -35,7 +35,6 @@ use tokio::sync::{
     oneshot,
     watch,
 };
-use transform::LocalToGlobalTransformSystem;
 use web_sys::HtmlCanvasElement;
 
 use crate::{
@@ -53,8 +52,9 @@ use crate::{
         material::Material,
         mesh::Mesh,
         pbr::PbrMaterial,
-        render_frame::RenderingSystem,
+        render_frame::rendering_system,
         texture::Texture,
+        transform::local_to_global_transform_system,
         utils::GpuResourceCache,
     },
     utils::{
@@ -464,7 +464,9 @@ impl Plugin for RenderPlugin {
         }
 
         context.resources.insert(GpuResourceCache::default());
-        context.schedule.add_system(LocalToGlobalTransformSystem);
-        context.schedule.add_system(RenderingSystem);
+        context
+            .schedule
+            .add_system(local_to_global_transform_system);
+        context.schedule.add_system(rendering_system);
     }
 }

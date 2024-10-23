@@ -3,10 +3,7 @@ use std::fmt::Debug;
 use crate::{
     ecs::{
         resource::Resources,
-        system::{
-            System,
-            SystemContext,
-        },
+        system::SystemContext,
         Label,
     },
     graphics::{
@@ -16,61 +13,47 @@ use crate::{
             RenderTargetInner,
         },
         Backend,
-        Error,
         Surface,
         SurfaceSize,
     },
     utils::thread_local_cell::ThreadLocalCell,
 };
 
-#[derive(Debug, Default)]
-pub struct RenderingSystem;
+pub fn rendering_system(system_context: &mut SystemContext) {
+    let mut render_targets = system_context
+        .world
+        .query::<(&RenderTarget, &mut AttachedRenderPass, Option<&Label>)>()
+        .without::<&DontRender>();
 
-impl System for RenderingSystem {
-    type Error = Error;
-
-    fn label(&self) -> &'static str {
-        "rendering"
-    }
-
-    fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
-        let mut render_targets = system_context
-            .world
-            .query::<(&RenderTarget, &mut AttachedRenderPass, Option<&Label>)>()
-            .without::<&DontRender>();
-
-        for (render_target_entity, (render_target, render_pass, label)) in render_targets.iter() {
-            match render_target.inner.get() {
-                RenderTargetInner::Surface { backend, surface } => {
-                    let surface_texture = surface
-                        .get_current_texture()
-                        .expect("could not get target texture");
-                    render_to_texture(
-                        backend,
-                        render_pass,
-                        &surface_texture.texture,
-                        render_target_entity,
-                        &system_context.world,
-                        &mut system_context.resources,
-                        label,
-                    );
-                    surface_texture.present();
-                }
-                RenderTargetInner::Texture { backend, texture } => {
-                    render_to_texture(
-                        backend,
-                        render_pass,
-                        texture,
-                        render_target_entity,
-                        &system_context.world,
-                        &mut system_context.resources,
-                        label,
-                    );
-                }
-            };
-        }
-
-        Ok(())
+    for (render_target_entity, (render_target, render_pass, label)) in render_targets.iter() {
+        match render_target.inner.get() {
+            RenderTargetInner::Surface { backend, surface } => {
+                let surface_texture = surface
+                    .get_current_texture()
+                    .expect("could not get target texture");
+                render_to_texture(
+                    backend,
+                    render_pass,
+                    &surface_texture.texture,
+                    render_target_entity,
+                    &system_context.world,
+                    &mut system_context.resources,
+                    label,
+                );
+                surface_texture.present();
+            }
+            RenderTargetInner::Texture { backend, texture } => {
+                render_to_texture(
+                    backend,
+                    render_pass,
+                    texture,
+                    render_target_entity,
+                    &system_context.world,
+                    &mut system_context.resources,
+                    label,
+                );
+            }
+        };
     }
 }
 

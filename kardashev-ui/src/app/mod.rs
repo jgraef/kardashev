@@ -40,13 +40,9 @@ use crate::{
     },
     ecs::{
         server::WorldServer,
-        system::{
-            System,
-            SystemContext,
-        },
+        system::SystemContext,
         Label,
     },
-    error::Error,
     graphics::{
         blinn_phong::BlinnPhongMaterial,
         light::{
@@ -120,83 +116,54 @@ fn provide_world() {
         .with_plugin(InputPlugin::default())
         .with_plugin(RenderPlugin)
         .with_plugin(MapPlugin)
-        .with_startup_system({
-            struct StartupSystem;
-
-            impl System for StartupSystem {
-                type Error = Error;
-
-                fn label(&self) -> &'static str {
-                    "startup"
-                }
-
-                fn poll_system(
-                    &mut self,
-                    system_context: &mut SystemContext<'_>,
-                ) -> Result<(), Self::Error> {
-                    //let api_client = context.resources.get::<ApiClient>().unwrap();
-                    // todo: we don't want to wait here for a reply, but should spawn a oneshot
-                    // system when the request finishes
-                    //let stars = api_client.get_stars().await?;
-
-                    let sphere = Mesh::from(shape::Sphere::default().mesh().build());
-
-                    let _sun = system_context.world.spawn((
-                        Transform {
-                            model_matrix: Similarity3::identity(),
-                        },
-                        sphere.clone(),
-                        Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
-                            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
-                        )),
-                        Load::<Material<PbrMaterial>>::new(asset_id!(
-                            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
-                        )),
-                        Label::new_static("star"),
-                    ));
-
-                    let _earth = system_context.world.spawn((
-                        Transform {
-                            model_matrix: Similarity3::new(
-                                Vector3::new(-5.0, 0.0, 0.0),
-                                Vector3::zeros(),
-                                1.0,
-                            ),
-                        },
-                        sphere,
-                        Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
-                            "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
-                        )),
-                        Load::<Material<PbrMaterial>>::new(asset_id!(
-                            "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
-                        )),
-                        Label::new_static("earth"),
-                    ));
-
-                    let _light = system_context.world.spawn((
-                        Transform {
-                            model_matrix: Similarity3::new(
-                                Vector3::new(0.0, -2.0, 5.0),
-                                Vector3::zeros(),
-                                1.0,
-                            ),
-                        },
-                        PointLight {
-                            color: palette::named::YELLOW.into_format(),
-                        },
-                    ));
-
-                    system_context.resources.insert(AmbientLight {
-                        color: palette::named::BLUEVIOLET.into_format(),
-                    });
-
-                    Ok(())
-                }
-            }
-
-            StartupSystem
-        })
+        .with_startup_system(create_world)
         .build();
 
     provide_context(world);
+}
+
+fn create_world(system_context: &mut SystemContext) {
+    //let api_client = context.resources.get::<ApiClient>().unwrap();
+    // todo: we don't want to wait here for a reply, but should spawn a oneshot
+    // system when the request finishes
+    //let stars = api_client.get_stars().await?;
+
+    let sphere = Mesh::from(shape::Sphere::default().mesh().build());
+
+    let _sun = system_context.world.spawn((
+        Transform {
+            model_matrix: Similarity3::identity(),
+        },
+        sphere.clone(),
+        Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
+            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
+        )),
+        Load::<Material<PbrMaterial>>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
+        Label::new_static("star"),
+    ));
+
+    let _earth = system_context.world.spawn((
+        Transform {
+            model_matrix: Similarity3::new(Vector3::new(-5.0, 0.0, 0.0), Vector3::zeros(), 1.0),
+        },
+        sphere,
+        Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
+            "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
+        )),
+        Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
+        Label::new_static("earth"),
+    ));
+
+    let _light = system_context.world.spawn((
+        Transform {
+            model_matrix: Similarity3::new(Vector3::new(0.0, -2.0, 5.0), Vector3::zeros(), 1.0),
+        },
+        PointLight {
+            color: palette::named::YELLOW.into_format(),
+        },
+    ));
+
+    system_context.resources.insert(AmbientLight {
+        color: palette::named::BLUEVIOLET.into_format(),
+    });
 }

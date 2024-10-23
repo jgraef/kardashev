@@ -32,10 +32,6 @@ pub struct AssetLoaderSystem {
 impl System for AssetLoaderSystem {
     type Error = Error;
 
-    fn label(&self) -> &'static str {
-        "asset-loader"
-    }
-
     fn poll_system(&mut self, system_context: &mut SystemContext<'_>) -> Result<(), Self::Error> {
         let asset_type_registry = system_context
             .resources
