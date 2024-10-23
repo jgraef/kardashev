@@ -65,15 +65,17 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
             material_bind_group_layout_builder.push_view_and_sampler();
         }
 
-        let material_bind_group_layout = material_bind_group_layout_builder
-            .build(&context.backend.device, Some("material bind group"));
+        let material_bind_group_layout = material_bind_group_layout_builder.build(
+            &context.backend.device,
+            Some("blinn-phong material bind group"),
+        );
 
         let pipeline_layout =
             context
                 .backend
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Render3dMeshesWithMaterial pipeline layout"),
+                    label: Some("blinn-phong pipeline layout"),
                     bind_group_layouts: &[
                         &material_bind_group_layout,
                         &context.camera_bind_group_layout,
@@ -87,7 +89,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                 .backend
                 .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Render3dMeshesWithMaterial pipeline"),
+                    label: Some("blinn-phong pipeline"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &shader,
@@ -142,7 +144,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
 pub struct BlinnPhongRenderPipeline {
     pipeline: wgpu::RenderPipeline,
     material_bind_group_layout: wgpu::BindGroupLayout,
-    draw_batcher: DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
+    draw_batcher: DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<BlinnPhongMaterial>, Instance>,
 }
 
 impl Render3dPipeline for BlinnPhongRenderPipeline {
@@ -221,7 +223,7 @@ impl CpuMaterial for BlinnPhongMaterial {
         backend: &super::backend::Backend,
         material_bind_group_layout: &wgpu::BindGroupLayout,
         cache: &mut GpuResourceCache,
-    ) -> Result<super::material::GpuMaterial, MaterialError> {
+    ) -> Result<GpuMaterial<Self>, MaterialError> {
         let fallback = get_fallback(backend, cache);
         let fallback = fallback.get();
 
@@ -241,6 +243,6 @@ impl CpuMaterial for BlinnPhongMaterial {
                 label: label.clone(),
             });
 
-        Ok(GpuMaterial { bind_group })
+        Ok(GpuMaterial::new(bind_group))
     }
 }

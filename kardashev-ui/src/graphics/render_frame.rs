@@ -83,7 +83,7 @@ fn render_to_texture(
     resources: &mut Resources,
     label: Option<&Label>,
 ) {
-    tracing::debug!(?label, "rendering frame");
+    tracing::trace!(?label, "rendering frame");
     let target_size = SurfaceSize::from_texture(texture);
     let target_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 

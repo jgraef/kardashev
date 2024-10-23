@@ -60,6 +60,7 @@ use crate::{
             MeshBuilder,
             Meshable,
         },
+        pbr::PbrMaterial,
         transform::Transform,
         RenderPlugin,
     },
@@ -148,6 +149,9 @@ fn provide_world() {
                         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
                             "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
                         )),
+                        Load::<Material<PbrMaterial>>::new(asset_id!(
+                            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
+                        )),
                         Label::new_static("star"),
                     ));
 
@@ -161,6 +165,9 @@ fn provide_world() {
                         },
                         sphere,
                         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
+                            "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
+                        )),
+                        Load::<Material<PbrMaterial>>::new(asset_id!(
                             "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
                         )),
                         Label::new_static("earth"),

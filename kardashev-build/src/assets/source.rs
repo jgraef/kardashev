@@ -150,12 +150,15 @@ impl From<AtlasDef> for Option<AtlasBuilderId> {
 #[serde(deny_unknown_fields)]
 pub struct Material {
     pub label: Option<String>,
+    pub normal: Option<AssetIdOrInline<Texture>>,
     pub ambient: Option<AssetIdOrInline<Texture>>,
     pub diffuse: Option<AssetIdOrInline<Texture>>,
     pub specular: Option<AssetIdOrInline<Texture>>,
-    pub normal: Option<AssetIdOrInline<Texture>>,
     pub shininess: Option<AssetIdOrInline<Texture>>,
     pub dissolve: Option<AssetIdOrInline<Texture>>,
+    pub albedo: Option<AssetIdOrInline<Texture>>,
+    pub metalness: Option<AssetIdOrInline<Texture>>,
+    pub roughness: Option<AssetIdOrInline<Texture>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

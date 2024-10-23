@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -42,7 +43,7 @@ pub struct Material<C> {
     pub asset_id: Option<AssetId>,
     pub label: Option<String>,
     pub cpu: C,
-    pub gpu: PerBackend<Arc<ThreadLocalCell<GpuMaterial>>>,
+    pub gpu: PerBackend<Arc<ThreadLocalCell<GpuMaterial<C>>>>,
 }
 
 impl<C: CpuMaterial> Material<C> {
@@ -51,7 +52,7 @@ impl<C: CpuMaterial> Material<C> {
         backend: &Backend,
         cache: &mut GpuResourceCache,
         material_bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Result<&Arc<ThreadLocalCell<GpuMaterial>>, MaterialError> {
+    ) -> Result<&Arc<ThreadLocalCell<GpuMaterial<C>>>, MaterialError> {
         let mut load = |cache: &mut GpuResourceCache| {
             let gpu = self.cpu.load_to_gpu(
                 self.label.as_deref(),
@@ -106,6 +107,8 @@ impl<C: CpuMaterial> LoadFromAsset for Material<C> {
     }
 }
 
+// todo: rename. would like to call it `Material`, but we also have the struct
+// `Material`
 pub trait CpuMaterial: Send + Sync + Sized + 'static {
     fn load_from_server<'a, 'b: 'a>(
         asset_id: AssetId,
@@ -118,15 +121,23 @@ pub trait CpuMaterial: Send + Sync + Sized + 'static {
         backend: &Backend,
         material_bind_group_layout: &wgpu::BindGroupLayout,
         cache: &mut GpuResourceCache,
-    ) -> Result<GpuMaterial, MaterialError>;
+    ) -> Result<GpuMaterial<Self>, MaterialError>;
 }
 
 #[derive(Debug)]
-pub struct GpuMaterial {
+pub struct GpuMaterial<M> {
     pub bind_group: wgpu::BindGroup,
+    _ty: PhantomData<M>,
 }
 
-impl GpuMaterial {
+impl<M> GpuMaterial<M> {
+    pub fn new(bind_group: wgpu::BindGroup) -> Self {
+        Self {
+            bind_group,
+            _ty: PhantomData,
+        }
+    }
+
     pub fn id(&self) -> GpuMaterialId {
         GpuMaterialId {
             id: self.bind_group.global_id(),
@@ -239,7 +250,17 @@ pub fn get_fallback(
 
             let sampler = Arc::new(backend.device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("fallback sampler"),
-                ..Default::default()
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                lod_min_clamp: 0.0,
+                lod_max_clamp: 32.0,
+                compare: None,
+                anisotropy_clamp: 1,
+                border_color: None,
             }));
             Arc::new(ThreadLocalCell::new(Fallback {
                 white,

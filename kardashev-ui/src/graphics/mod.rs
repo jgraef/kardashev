@@ -52,6 +52,7 @@ use crate::{
         blinn_phong::BlinnPhongMaterial,
         material::Material,
         mesh::Mesh,
+        pbr::PbrMaterial,
         render_frame::RenderingSystem,
         texture::Texture,
         utils::GpuResourceCache,
@@ -455,7 +456,8 @@ impl Plugin for RenderPlugin {
             asset_type_registry
                 .register::<Texture>()
                 .register::<Mesh>()
-                .register::<Material<BlinnPhongMaterial>>();
+                .register::<Material<BlinnPhongMaterial>>()
+                .register::<Material<PbrMaterial>>();
         }
         else {
             tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");

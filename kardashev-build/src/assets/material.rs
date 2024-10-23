@@ -132,7 +132,7 @@ impl Asset for Material {
         .await?;
 
         let albedo = process_texture(
-            &self.normal,
+            &self.albedo,
             MaterialProperty::Albedo,
             id,
             context,
@@ -140,7 +140,7 @@ impl Asset for Material {
         )
         .await?;
         let metalness = process_texture(
-            &self.normal,
+            &self.metalness,
             MaterialProperty::Metalness,
             id,
             context,
@@ -148,7 +148,7 @@ impl Asset for Material {
         )
         .await?;
         let roughness = process_texture(
-            &self.normal,
+            &self.roughness,
             MaterialProperty::Roughness,
             id,
             context,

@@ -31,14 +31,14 @@ impl KeyboardInput {
 
         let _ = use_event_listener(use_window(), leptos::ev::keyup, move |event| {
             if let Some(event) = KeyboardEvent::from_websys_key_up(&event) {
-                tracing::debug!(?event);
+                tracing::trace!(?event, "keyboard event");
                 let _ = tx_up.send(event);
             }
         });
 
         let _ = use_event_listener(use_window(), leptos::ev::keydown, move |event| {
             if let Some(event) = KeyboardEvent::from_websys_key_down(&event) {
-                tracing::debug!(?event);
+                tracing::trace!(?event, "keyboard event");
                 let _ = tx_down.send(event);
             }
         });

@@ -325,7 +325,7 @@ impl<'a> Render3dPipelineContext<'a> {
 
     pub fn batch_meshes_with_material<M: CpuMaterial>(
         &mut self,
-        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, Instance>,
         material_bind_group_layout: &wgpu::BindGroupLayout,
     ) {
         tracing::trace!("batching");
@@ -339,9 +339,7 @@ impl<'a> Render3dPipelineContext<'a> {
             .get_mut_or_insert_default::<GpuResourceCache>();
 
         for (_entity, (transform, mesh, material)) in render_entities.iter() {
-            //tracing::trace!(?entity, ?mesh, ?material, "rendering entity");
-
-            // handle errors
+            // todo: handle errors
 
             let Ok(mesh) = mesh.gpu(&self.backend, gpu_resource_cache)
             else {
@@ -373,9 +371,9 @@ impl<'a> Render3dPipelineContext<'a> {
         }
     }
 
-    pub fn draw_batched_meshes_with_materials(
+    pub fn draw_batched_meshes_with_materials<M: CpuMaterial>(
         &mut self,
-        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair, Instance>,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, Instance>,
         instance_buffer_slot: u32,
         vertex_buffer_slot: u32,
         material_bind_group_index: u32,
@@ -609,7 +607,7 @@ pub struct MeshMaterialPairKey {
 }
 
 #[derive(Clone, Debug)]
-pub struct MeshMaterialPair {
+pub struct MeshMaterialPair<M> {
     pub mesh: Arc<ThreadLocalCell<GpuMesh>>,
-    pub material: Arc<ThreadLocalCell<GpuMaterial>>,
+    pub material: Arc<ThreadLocalCell<GpuMaterial<M>>>,
 }

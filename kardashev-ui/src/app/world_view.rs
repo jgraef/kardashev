@@ -159,10 +159,7 @@ pub fn WorldView() -> impl IntoView {
                     let world = expect_context::<WorldServer>();
                     let _ = world.run(move |system_context| {
                         if visible {
-                            system_context
-                                .world
-                                .remove_one::<DontRender>(camera_entity)
-                                .unwrap();
+                            let _ = system_context.world.remove_one::<DontRender>(camera_entity);
                         }
                         else {
                             system_context
