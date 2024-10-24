@@ -260,7 +260,7 @@ impl PipelineMaterial for BlinnPhongMaterial {
                 &fallback.white.view
             }
             else {
-                &fallback.pink.view
+                &fallback.black.view
             },
             &fallback.sampler,
         )?;
@@ -270,7 +270,7 @@ impl PipelineMaterial for BlinnPhongMaterial {
                 &fallback.white.view
             }
             else {
-                &fallback.pink.view
+                &fallback.black.view
             },
             &fallback.sampler,
         )?;
@@ -286,17 +286,12 @@ impl PipelineMaterial for BlinnPhongMaterial {
         )?;
         bind_group_builder.push(
             &mut self.normal_texture,
-            &fallback.black.view,
+            &fallback.normal.view,
             &fallback.sampler,
         )?;
         bind_group_builder.push(
             &mut self.shininess_texture,
-            if self.shininess.is_some() {
-                &fallback.white.view
-            }
-            else {
-                &fallback.black.view
-            },
+            &fallback.white.view,
             &fallback.sampler,
         )?;
         bind_group_builder.push(
@@ -351,7 +346,7 @@ impl MaterialInstanceData {
             diffuse_color: material.diffuse_color.unwrap_or(WHITE).as_array3(),
             specular_color: material.specular_color.unwrap_or(WHITE).as_array3(),
             emissive_color: material.emissive_color.unwrap_or(WHITE).as_array3(),
-            shininess: material.shininess.unwrap_or(0.0),
+            shininess: material.shininess.unwrap_or(64.0),
             dissolve: material.dissolve.unwrap_or(0.0),
         }
     }
@@ -373,58 +368,58 @@ impl HasVertexBufferLayout for Instance {
                 // model transform
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 // material ambient color
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 7,
+                    shader_location: 9,
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 // material diffuse color
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
-                    shader_location: 8,
+                    shader_location: 10,
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 // material specular color
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
-                    shader_location: 9,
+                    shader_location: 11,
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 // material emissive color
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 25]>() as wgpu::BufferAddress,
-                    shader_location: 10,
+                    shader_location: 12,
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 // material shininess
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 28]>() as wgpu::BufferAddress,
-                    shader_location: 11,
+                    shader_location: 13,
                     format: wgpu::VertexFormat::Float32,
                 },
                 // material shininess
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 29]>() as wgpu::BufferAddress,
-                    shader_location: 12,
+                    shader_location: 14,
                     format: wgpu::VertexFormat::Float32,
                 },
             ],

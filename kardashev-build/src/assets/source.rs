@@ -194,8 +194,35 @@ pub enum AssetIdOrInline<T> {
 #[serde(deny_unknown_fields)]
 pub struct MaterialColorTexture {
     #[serde(alias = "color")]
-    pub tint: Option<Srgb<f32>>,
+    pub tint: Option<Color>,
     pub texture: Option<AssetIdOrInline<Texture>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Color {
+    Srgb(Srgb<f32>),
+    Named(String),
+}
+
+impl Color {
+    pub fn as_srgb(&self) -> Result<Srgb<f32>, InvalidColorName> {
+        match self {
+            Self::Srgb(color) => Ok(*color),
+            Self::Named(name) => {
+                let name_lowercase = name.to_lowercase();
+                palette::named::from_str(&name_lowercase)
+                    .map(|color| color.into_format())
+                    .ok_or_else(|| InvalidColorName { name: name.clone() })
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid color name: {name}")]
+pub struct InvalidColorName {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

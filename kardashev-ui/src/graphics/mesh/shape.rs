@@ -103,6 +103,8 @@ fn mesh_sphere_uv(radius: f32, sectors: usize, stacks: usize) -> MeshData {
                 position: [x, y, z],
                 normal: [x * length_inv, y * length_inv, z * length_inv],
                 tex_coords: [(j as f32) / sectors_f32, (i as f32) / stacks_f32],
+                tangent: Default::default(),
+                bitangent: Default::default(),
             });
         }
     }
@@ -134,9 +136,11 @@ fn mesh_sphere_uv(radius: f32, sectors: usize, stacks: usize) -> MeshData {
     MeshData {
         primitive_topology: PrimitiveTopology::TriangleList,
         winding_order: WindingOrder::CounterClockwise,
+        has_binormals: false,
         indices,
         vertices,
     }
+    .with_binormals()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -176,6 +180,7 @@ impl MeshBuilder for RectangleMeshBuilder {
         MeshData {
             primitive_topology: PrimitiveTopology::TriangleList,
             winding_order: WindingOrder::CounterClockwise,
+            has_binormals: false,
             indices: vec![0, 2, 1, 1, 2, 3],
             vertices: vec![
                 Vertex {
@@ -186,6 +191,8 @@ impl MeshBuilder for RectangleMeshBuilder {
                     ],
                     normal: [0., 0., 1.],
                     tex_coords: [0., 0.],
+                    tangent: Default::default(),
+                    bitangent: Default::default(),
                 },
                 Vertex {
                     position: [
@@ -195,6 +202,8 @@ impl MeshBuilder for RectangleMeshBuilder {
                     ],
                     normal: [0., 0., 1.],
                     tex_coords: [1., 0.],
+                    tangent: Default::default(),
+                    bitangent: Default::default(),
                 },
                 Vertex {
                     position: [
@@ -204,6 +213,8 @@ impl MeshBuilder for RectangleMeshBuilder {
                     ],
                     normal: [0., 0., 1.],
                     tex_coords: [0., 1.],
+                    tangent: Default::default(),
+                    bitangent: Default::default(),
                 },
                 Vertex {
                     position: [
@@ -213,9 +224,12 @@ impl MeshBuilder for RectangleMeshBuilder {
                     ],
                     normal: [0., 0., 1.],
                     tex_coords: [1., 1.],
+                    tangent: Default::default(),
+                    bitangent: Default::default(),
                 },
             ],
         }
+        .with_binormals()
     }
 }
 
@@ -333,6 +347,7 @@ impl MeshBuilder for CuboidMeshBuilder {
         MeshData {
             primitive_topology: PrimitiveTopology::TriangleList,
             winding_order: WindingOrder::CounterClockwise,
+            has_binormals: false,
             indices: INDICES.into_iter().collect(),
             vertices: (0..24)
                 .map(|i| {
@@ -340,9 +355,12 @@ impl MeshBuilder for CuboidMeshBuilder {
                         position: pos(i, &self.cuboid.dimensions),
                         normal: NORMALS[i / 4],
                         tex_coords: UVS[i],
+                        tangent: Default::default(),
+                        bitangent: Default::default(),
                     }
                 })
                 .collect(),
         }
+        .with_binormals()
     }
 }

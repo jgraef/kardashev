@@ -20,9 +20,7 @@ use leptos_meta::provide_meta_context;
 use leptos_router::Router;
 use nalgebra::{
     Point3,
-    Similarity3,
     UnitQuaternion,
-    Vector3,
 };
 use palette::Srgb;
 
@@ -127,9 +125,9 @@ fn provide_world() {
 }
 
 fn create_world(system_context: &mut SystemContext) {
-    let sphere = Mesh::from(shape::Sphere::default().mesh().build())
-        .with_asset_id(asset_id!("d264e0db-9e26-4cca-8469-3fcb1d674bf5"));
-    //let sphere = Mesh::from(shape::Cuboid::default().mesh().build());
+    let shape = shape::Sphere::default().mesh().build();
+    //let shape = shape::Cuboid::default().mesh().build();
+    let sphere = Mesh::from(shape).with_asset_id(asset_id!("d264e0db-9e26-4cca-8469-3fcb1d674bf5"));
 
     const SUN_LIGHT_COLOR: Srgb<f32> = Srgb::new(1.0, 0.92902, 0.89906);
 
@@ -137,7 +135,7 @@ fn create_world(system_context: &mut SystemContext) {
         Transform::from_position(Point3::origin()),
         sphere.clone(),
         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
-            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0" //"cbef3406-54ae-4832-bebf-27c3ac9e130c"
+            "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
         )),
         Load::<Material<PbrMaterial>>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
         Label::new_static("star"),
@@ -145,10 +143,11 @@ fn create_world(system_context: &mut SystemContext) {
     ));
 
     let _earth = system_context.world.spawn((
-        Transform::from_position(Point3::new(-5.0, 0.0, 0.0)),
+        Transform::from_position(Point3::new(-5.0, 0.0, 0.0))
+            .with_rotation(UnitQuaternion::from_euler_angles(0.25 * PI, 0.25 * PI, 0.0)),
         sphere,
         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
-            "d5b74211-70fb-4b4c-9199-c5aa89b90b01"
+            "d5b74211-70fb-4b4c-9199-c5aa89b90b01" //"cbef3406-54ae-4832-bebf-27c3ac9e130c"
         )),
         Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
         Label::new_static("earth"),

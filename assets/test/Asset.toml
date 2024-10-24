@@ -10,5 +10,6 @@ path = "cube_texture.png"
 label = "test-cube"
 ambient = { texture = "04332e33-273f-4d12-9993-f04355268721" }
 diffuse = { texture = "04332e33-273f-4d12-9993-f04355268721" }
-specular = { texture = "04332e33-273f-4d12-9993-f04355268721" }
+specular = { color = [1.0, 1.0, 1.0] }
+shininess = { value = 32.0 }
 #albedo = { texture = "04332e33-273f-4d12-9993-f04355268721" }

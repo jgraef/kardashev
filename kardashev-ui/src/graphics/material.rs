@@ -12,7 +12,10 @@ use kardashev_protocol::{
         AssetId,
     },
 };
-use palette::WithAlpha;
+use palette::{
+    Srgba,
+    WithAlpha,
+};
 
 use super::texture::Texture;
 use crate::{
@@ -224,6 +227,7 @@ pub struct Fallback {
     pub white: Arc<GpuTexture>,
     pub black: Arc<GpuTexture>,
     pub pink: Arc<GpuTexture>,
+    pub normal: Arc<GpuTexture>,
     pub sampler: Arc<wgpu::Sampler>,
 }
 
@@ -237,14 +241,22 @@ pub fn get_fallback(
         || {
             let white = Arc::new(GpuTexture::color1x1(
                 palette::named::WHITE.into_format().with_alpha(1.0),
+                wgpu::TextureFormat::Rgba8UnormSrgb,
                 backend,
             ));
             let black = Arc::new(GpuTexture::color1x1(
                 palette::named::BLACK.into_format().with_alpha(1.0),
+                wgpu::TextureFormat::Rgba8UnormSrgb,
                 backend,
             ));
             let pink = Arc::new(GpuTexture::color1x1(
                 palette::named::PINK.into_format().with_alpha(1.0),
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                backend,
+            ));
+            let normal = Arc::new(GpuTexture::color1x1(
+                Srgba::new(0.5, 0.5, 1.0, 1.0),
+                wgpu::TextureFormat::Rgba8Unorm,
                 backend,
             ));
 
@@ -266,6 +278,7 @@ pub fn get_fallback(
                 white,
                 black,
                 pink,
+                normal,
                 sampler,
             }))
         },

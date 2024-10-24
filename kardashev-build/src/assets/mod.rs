@@ -57,6 +57,7 @@ pub enum Error {
     Watch(#[from] crate::util::watch::Error),
     AssetParse(#[from] kardashev_protocol::assets::AssetParseError),
     NagaValidatation(#[from] naga::WithSpan<naga::valid::ValidationError>),
+    InvalidColorName(#[from] crate::assets::source::InvalidColorName),
 }
 
 pub async fn process(

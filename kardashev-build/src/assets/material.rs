@@ -150,7 +150,10 @@ impl Asset for Material {
                     property,
                 )
                 .await?;
-                Ok((texture, input.tint))
+
+                let tint = input.tint.as_ref().map(|tint| tint.as_srgb()).transpose()?;
+
+                Ok((texture, tint))
             }
             else {
                 Ok((None, None))

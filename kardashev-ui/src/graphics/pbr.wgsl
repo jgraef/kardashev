@@ -9,10 +9,10 @@ var<uniform> camera: Camera;
 var<uniform> light: Lights;
 
 struct InstanceInput {
-    @location(3) model_transform_a: vec4<f32>,
-    @location(4) model_transform_b: vec4<f32>,
-    @location(5) model_transform_c: vec4<f32>,
-    @location(6) model_transform_d: vec4<f32>,
+    @location(5) model_transform_a: vec4<f32>,
+    @location(6) model_transform_b: vec4<f32>,
+    @location(7) model_transform_c: vec4<f32>,
+    @location(8) model_transform_d: vec4<f32>,
 }
 
 struct VertexOutput {

@@ -1,6 +1,5 @@
 #import camera.wgsl::Camera;
 #import light.wgsl::Lights;
-#import render_3d.wgsl::{VertexInput, vs_main_inner};
 
 @group(1) @binding(0)
 var<uniform> camera: Camera;
@@ -8,30 +7,39 @@ var<uniform> camera: Camera;
 @group(2) @binding(0)
 var<uniform> light: Lights;
 
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) tangent: vec3<f32>,
+    @location(4) bitangent: vec3<f32>,
+}
+
 struct InstanceInput {
-    @location(3) model_transform_a: vec4<f32>,
-    @location(4) model_transform_b: vec4<f32>,
-    @location(5) model_transform_c: vec4<f32>,
-    @location(6) model_transform_d: vec4<f32>,
-    @location(7) material_ambient_color: vec3<f32>,
-    @location(8) material_diffuse_color: vec3<f32>,
-    @location(9) material_specular_color: vec3<f32>,
-    @location(10) material_emissive_color: vec3<f32>,
-    @location(11) material_shininess: f32,
-    @location(12) material_dissolve: f32,
+    @location(5) model_transform_a: vec4<f32>,
+    @location(6) model_transform_b: vec4<f32>,
+    @location(7) model_transform_c: vec4<f32>,
+    @location(8) model_transform_d: vec4<f32>,
+    @location(9) material_ambient_color: vec3<f32>,
+    @location(10) material_diffuse_color: vec3<f32>,
+    @location(11) material_specular_color: vec3<f32>,
+    @location(12) material_emissive_color: vec3<f32>,
+    @location(13) material_shininess: f32,
+    @location(14) material_dissolve: f32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
-    @location(1) world_position: vec3<f32>,
-    @location(2) world_normal: vec3<f32>,
-    @location(3) material_ambient_color: vec3<f32>,
-    @location(4) material_diffuse_color: vec3<f32>,
-    @location(5) material_specular_color: vec3<f32>,
-    @location(6) material_emissive_color: vec3<f32>,
-    @location(7) material_shininess: f32,
-    @location(8) material_dissolve: f32,
+    @location(1) tangent_position: vec3<f32>,
+    @location(2) tangent_view_position: vec3<f32>,
+    @location(3) tangent_light_position: vec3<f32>,
+    @location(4) material_ambient_color: vec3<f32>,
+    @location(5) material_diffuse_color: vec3<f32>,
+    @location(6) material_specular_color: vec3<f32>,
+    @location(7) material_emissive_color: vec3<f32>,
+    @location(8) material_shininess: f32,
+    @location(9) material_dissolve: f32,
 }
 
 struct FragmentOutput {
@@ -79,13 +87,36 @@ fn vs_main(
         instance.model_transform_c,
         instance.model_transform_d,
     );
-    let inner = vs_main_inner(vertex, model_transform, camera);
 
     var out: VertexOutput;
-    out.clip_position = inner.clip_position;
-    out.tex_coords = inner.tex_coords;
-    out.world_position = inner.world_position;
-    out.world_normal = inner.world_normal;
+
+    let world_position = model_transform * vec4<f32>(vertex.position, 1.0);
+
+    // this works if the model_transform uses uniform scaling.
+    let world_normal = normalize((model_transform * vec4<f32>(vertex.normal, 0.0)).xyz);
+    let world_tangent = normalize((model_transform * vec4<f32>(vertex.tangent, 0.0)).xyz);
+    let world_bitangent = normalize((model_transform * vec4<f32>(vertex.bitangent, 0.0)).xyz);
+    //let world_normal = vertex.normal;
+    //let world_tangent = vertex.tangent;
+    //let world_bitangent = vertex.bitangent;
+
+    let tangent_matrix = transpose(mat3x3<f32>(
+        world_tangent,
+        world_bitangent,
+        world_normal,
+    ));
+
+    out.clip_position = camera.view_projection * world_position;
+    out.tex_coords = vertex.tex_coords;
+        
+    out.tangent_position = tangent_matrix * world_position.xyz;
+    out.tangent_view_position = tangent_matrix * camera.view_position.xyz;
+    // fixme
+    //for (var i: u32 = 0; i < light.num_point_lights; i++) {
+    //    out.tangent_light_position[i] = tangent_matrix * light.point_lights[i].position;
+    //}
+    out.tangent_light_position = tangent_matrix * light.point_lights[0].position.xyz;
+    
     out.material_ambient_color = instance.material_ambient_color;
     out.material_diffuse_color = instance.material_diffuse_color;
     out.material_specular_color = instance.material_specular_color;
@@ -99,9 +130,12 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
-    // todo: use the other material textures, if applicable
+    
+    let tangent_normal = textureSample(material_normal_texture_view, material_normal_sampler, in.tex_coords).xyz * 2.0 - 1.0;
+    //let tangent_normal = vec3f(0.0, 0.0, 1.0);
 
-    let view_direction = normalize(camera.view_position - in.world_position);
+    //let view_direction = normalize(camera.view_position - in.world_position);
+    let view_direction = normalize(in.tangent_view_position - in.tangent_position);
     
     let ambient_texture_color = textureSample(material_ambient_texture_view, material_ambient_sampler, in.tex_coords).xyz;
     let ambient_color = light.ambient_light * ambient_texture_color * in.material_ambient_color;
@@ -114,18 +148,22 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
 
     var specular_color = vec3f(0.0);
     let specular_texture_color = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords).xyz;
-    //let shininess = textureSample(material_shininess_texture_view, material_shininess_sampler, in.tex_coords).x;
-    let shininess = 32.0;
+    // fixme
+    let texture_shininess = textureSample(material_shininess_texture_view, material_shininess_sampler, in.tex_coords).x;
+    let shininess = texture_shininess * in.material_shininess;
 
     // spot lights
     for (var i: u32 = 0; i < light.num_point_lights; i++) {
-        let light_direction = normalize(light.point_lights[i].position.xyz - in.world_position);
-        let reflect_direction = reflect(-light_direction, in.world_normal);
+        let light_direction = normalize(in.tangent_light_position - in.tangent_position);
         
-        let diffuse_strength = max(dot(in.world_normal, light_direction), 0.0);
+        let reflect_direction = reflect(-light_direction, tangent_normal);
+        //let half_direction = normalize(view_direction + light_direction);
+        
+        let diffuse_strength = max(dot(tangent_normal, light_direction), 0.0);
         diffuse_color += light.point_lights[i].color * diffuse_strength;
 
         let specular_strength = pow(max(dot(view_direction, reflect_direction), 0.0), shininess);
+        //let specular_strength = pow(max(dot(tangent_normal, half_direction), 0.0), shininess);
         specular_color += light.point_lights[i].color * specular_strength;
     }
     diffuse_color *= diffuse_texture_color * in.material_diffuse_color;

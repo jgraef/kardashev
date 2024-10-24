@@ -259,6 +259,7 @@ impl GpuTexture {
 
     pub fn color1x1<C: palette::stimulus::IntoStimulus<u8>>(
         color: Srgba<C>,
+        format: wgpu::TextureFormat,
         backend: &Backend,
     ) -> Self {
         let color: Srgba<u8> = color.into_format();
@@ -275,7 +276,7 @@ impl GpuTexture {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 label: Some(&format!(
                     "color 1x1 #{:02x}{:02x}{:02x}",

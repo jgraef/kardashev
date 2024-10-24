@@ -41,10 +41,8 @@ use crate::{
         },
         transform::GlobalTransform,
         utils::{
-            vector3_to_array4,
             wgpu_buffer_size,
             GpuResourceCache,
-            HasVertexBufferLayout,
             Srgb32Ext,
             Srgba64Ext,
         },
