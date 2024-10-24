@@ -168,10 +168,8 @@ impl<P: CreateRender3dPipeline> CreateRenderPass for CreateRender3dPass<P> {
         Render3dPass {
             pipeline,
             camera_buffer,
-            camera_bind_group_layout,
             camera_bind_group,
             light_buffer,
-            light_bind_group_layout,
             light_bind_group,
             depth_texture,
             creation_time,
@@ -184,10 +182,8 @@ impl<P: CreateRender3dPipeline> CreateRenderPass for CreateRender3dPass<P> {
 pub struct Render3dPass<P> {
     pipeline: P,
     camera_buffer: wgpu::Buffer,
-    camera_bind_group_layout: wgpu::BindGroupLayout,
     camera_bind_group: wgpu::BindGroup,
     light_buffer: wgpu::Buffer,
-    light_bind_group_layout: wgpu::BindGroupLayout,
     light_bind_group: wgpu::BindGroup,
     depth_texture: DepthTexture,
     creation_time: Instant,
@@ -475,7 +471,7 @@ impl CameraUniform {
                 .try_into()
                 .unwrap(),
             _padding1: Default::default(),
-            aspect: camera.aspect,
+            aspect: camera.projection_matrix.aspect(),
             time: 0.0,
             _padding2: Default::default(),
         }

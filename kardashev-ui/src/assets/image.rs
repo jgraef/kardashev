@@ -193,8 +193,8 @@ pub fn load_image(url: impl Into<ImageUrl>) -> LoadImage {
     LoadImage {
         url,
         image_element,
-        onload_callback,
-        onerror_callback,
+        _onload_callback: onload_callback,
+        _onerror_callback: onerror_callback,
         rx,
     }
 }
@@ -203,8 +203,8 @@ pub fn load_image(url: impl Into<ImageUrl>) -> LoadImage {
 pub struct LoadImage {
     url: ImageUrl,
     image_element: HtmlImageElement,
-    onload_callback: Closure<dyn FnMut(Event)>,
-    onerror_callback: Closure<dyn FnMut(Event)>,
+    _onload_callback: Closure<dyn FnMut(Event)>,
+    _onerror_callback: Closure<dyn FnMut(Event)>,
     rx: oneshot::Receiver<Result<RgbaImage, LoadImageErrorReason>>,
 }
 

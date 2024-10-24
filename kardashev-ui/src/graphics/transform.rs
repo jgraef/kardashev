@@ -1,9 +1,6 @@
 use hecs::Entity;
 use nalgebra::{
-    Point3,
-    Similarity3,
-    Unit,
-    Vector3,
+    Point3, Similarity, Similarity3, Translation3, Unit, UnitQuaternion, Vector3
 };
 
 use crate::ecs::{
@@ -17,19 +14,37 @@ pub struct Transform {
 }
 
 impl Transform {
-    pub fn look_at(eye: Point3<f32>, look_at: Point3<f32>) -> Self {
-        let unit = Unit::face_towards(&(&eye - &look_at), &Vector3::z());
-        let (axis, angle) = unit.axis_angle().unwrap();
-        Transform {
-            model_matrix: Similarity3::new(eye.coords, *axis * angle, 1.0),
+    pub fn from_position(position: Point3<f32>) -> Self {
+        Self {
+            model_matrix: Similarity3::from_parts(Translation3::from(position.coords), UnitQuaternion::identity(), 1.0)
         }
+    }
+
+    pub fn look_at(eye: Point3<f32>, look_at: Point3<f32>, up: Vector3<f32>) -> Self {
+        // according to `Unit:face_towards` this needs to be `look_at - eye`, but our Z axis is reversed, so it needs to be this way.
+        let dir = &eye - &look_at;
+
+        let quaternion = Unit::face_towards(&dir, &up);
+        Transform {
+            model_matrix: Similarity3::from_parts(Translation3::from(eye.coords), quaternion, 1.0),
+        }
+    }
+
+    pub fn with_rotation(mut self, rotation: UnitQuaternion<f32>) -> Self {
+        self.model_matrix.append_rotation_wrt_center_mut(&rotation);
+        self
+    }
+
+    pub fn with_scaling(mut self, scaling: f32) -> Self {
+        self.model_matrix = self.model_matrix.append_scaling(scaling);
+        self
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct GlobalTransform {
     pub model_matrix: Similarity3<f32>,
-    pub tick_last_updated: Option<Tick>,
+    pub tick_last_updated: Tick,
 }
 
 impl GlobalTransform {
@@ -48,74 +63,59 @@ pub struct Parent {
 }
 
 pub fn local_to_global_transform_system(system_context: &mut SystemContext) {
+    type TransformView<'a> = (&'a Transform, Option<&'a mut GlobalTransform>);
+    type HierarchyView<'a> = &'a Parent;
+
     fn local_to_global(
         entity: Entity,
-        local: &Transform,
-        global: Option<&mut GlobalTransform>,
-        parent: Option<&Parent>,
+        transform_view: &mut hecs::ViewBorrow<TransformView>,
+        hierarchy_view: &hecs::ViewBorrow<HierarchyView>,
         tick: Tick,
-        world: &hecs::World,
-        mut command_buffer: &mut hecs::CommandBuffer,
-    ) {
-        let mut new_global = None;
-        let global = global.unwrap_or_else(|| {
-            new_global = Some(GlobalTransform::default());
-            new_global.as_mut().unwrap()
-        });
-
-        if global
-            .tick_last_updated
-            .map_or(false, |tick_last_updated| tick_last_updated >= tick)
-        {
-            return;
-        }
-
-        if let Some(parent) = parent {
-            let mut parent_query = world
-                .query_one::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>(
-                    parent.entity,
-                )
-                .unwrap();
-
-            global.tick_last_updated = Some(tick);
-
-            if let Some((parent_local, mut parent_global, parent_parent)) = parent_query.get() {
-                local_to_global(
-                    parent.entity,
-                    parent_local,
-                    parent_global.as_deref_mut(),
-                    parent_parent,
-                    tick,
-                    world,
-                    &mut command_buffer,
-                );
-
-                global.model_matrix =
-                    local.model_matrix * parent_global.as_ref().unwrap().model_matrix;
-            }
+        command_buffer: &mut hecs::CommandBuffer,
+    ) -> Similarity3<f32> {
+        let parent_global = if let Some(parent) = hierarchy_view.get(entity) {
+            local_to_global(
+                parent.entity,
+                transform_view,
+                hierarchy_view,
+                tick,
+                command_buffer,
+            )
         }
         else {
-            global.model_matrix = local.model_matrix;
-            global.tick_last_updated = Some(tick);
-        }
+            Default::default()
+        };
 
-        if let Some(global) = new_global {
-            command_buffer.insert(entity, (global,));
+        let (local, global) = transform_view.get_mut(entity).unwrap();
+
+        if let Some(global) = global {
+            if global.tick_last_updated < tick {
+                global.model_matrix = local.model_matrix * parent_global;
+                global.tick_last_updated = tick;
+            }
+            global.model_matrix
+        }
+        else {
+            let model_matrix = local.model_matrix * parent_global;
+            let global = GlobalTransform {
+                model_matrix,
+                tick_last_updated: tick,
+            };
+            command_buffer.insert(entity, (global.clone(),));
+            model_matrix
         }
     }
 
-    let mut query = system_context
-        .world
-        .query::<(&Transform, Option<&mut GlobalTransform>, Option<&Parent>)>();
+    let mut entities_query = system_context.world.query::<()>().with::<&Transform>();
+    let mut transform_view = system_context.world.view::<TransformView>();
+    let hierarchy_view = system_context.world.view::<HierarchyView>();
 
-    for (entity, (local, global, parent)) in query.iter() {
+    for (entity, _) in entities_query.iter() {
         local_to_global(
             entity,
-            local,
-            global,
-            parent,
+            &mut transform_view,
+            &hierarchy_view,
             system_context.tick,
-            &system_context.world,
             &mut system_context.command_buffer,
         );
     }

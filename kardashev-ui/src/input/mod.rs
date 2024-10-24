@@ -1,8 +1,6 @@
 pub mod keyboard;
 pub mod mouse;
 
-use nalgebra::Point2;
-
 use self::{
     keyboard::{
         KeyboardEvent,
@@ -25,10 +23,6 @@ use crate::{
 pub enum InputEvent {
     Mouse(MouseEvent),
     Keyboard(KeyboardEvent),
-}
-
-fn mouse_position_from_websys(event: &web_sys::MouseEvent) -> Point2<f32> {
-    Point2::new(event.offset_x() as f32, event.offset_y() as f32)
 }
 
 #[derive(Clone, Debug, Default)]

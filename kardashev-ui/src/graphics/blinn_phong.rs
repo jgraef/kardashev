@@ -230,7 +230,7 @@ impl CpuMaterial for BlinnPhongMaterial {
         let mut bind_group_builder = BindGroupBuilder::<12>::new(backend, cache);
         bind_group_builder.push(&mut self.ambient, &fallback.pink.view, &fallback.sampler)?;
         bind_group_builder.push(&mut self.diffuse, &fallback.pink.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.specular, &fallback.black.view, &fallback.sampler)?;
+        bind_group_builder.push(&mut self.specular, &fallback.white.view, &fallback.sampler)?;
         bind_group_builder.push(&mut self.normal, &fallback.black.view, &fallback.sampler)?;
         bind_group_builder.push(&mut self.shininess, &fallback.black.view, &fallback.sampler)?;
         bind_group_builder.push(&mut self.dissolve, &fallback.black.view, &fallback.sampler)?;

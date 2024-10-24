@@ -226,6 +226,7 @@ impl Asset for Mesh {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MeshData {
     pub primitive_topology: PrimitiveTopology,
+    pub winding_order: WindingOrder,
     pub indices: Vec<u16>,
     pub vertices: Vec<Vertex>,
 }
@@ -237,6 +238,12 @@ pub enum PrimitiveTopology {
     LineStrip,
     TriangleList,
     TriangleStrip,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindingOrder {
+    Clockwise,
+    CounterClockwise,
 }
 
 #[derive(Clone, Copy, Debug, Zeroable, Pod, Serialize, Deserialize)]

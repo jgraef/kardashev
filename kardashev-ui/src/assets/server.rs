@@ -60,6 +60,7 @@ impl AssetServer {
         rx
     }
 
+    #[allow(dead_code)]
     pub fn load<A: LoadFromAsset>(
         &self,
         asset_id: AssetId,
@@ -159,7 +160,8 @@ impl Reactor {
                 };
                 load_request.load(&mut loader).await;
             }
-            Command::RegisterAssetType { asset_type: _ } => {
+            Command::RegisterAssetType { asset_type } => {
+                let _ = asset_type;
                 // todo
             }
         }

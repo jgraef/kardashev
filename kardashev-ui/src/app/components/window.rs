@@ -157,6 +157,7 @@ where
                 on:mouseenter=move |event| on_mouse_input(MouseEvent::from_websys_mouse_enter(&event))
                 on:mouseleave=move |event| on_mouse_input(MouseEvent::from_websys_mouse_leave(&event))
                 on:wheel=move |event| on_mouse_input(MouseEvent::from_websys_wheel(&event))
+                on:contextmenu=move |event| event.prevent_default()
             ></canvas>
         </div>
     }

@@ -54,27 +54,33 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
 
     let view_direction = normalize(camera.view_position - in.world_position);
     
-    // ambient color
-    let ambient_color = light.ambient_light.xyz;
+    let ambient_texture_color = textureSample(material_ambient_texture_view, material_ambient_sampler, in.tex_coords);
+    let ambient_color = light.ambient_light * ambient_texture_color;
+
+    var diffuse_color = vec4f(0.0);
+    let diffuse_texture_color = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords);
+
+    var specular_color = vec4f(0.0);
+    let specular_texture_color = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords);
+    //let shininess = textureSample(material_shininess_texture_view, material_shininess_sampler, in.tex_coords).x;
+    let shininess = 32.0;
 
     // spot lights
-    var diffuse_color = vec3f(0.0);
     for (var i: u32 = 0; i < light.num_point_lights; i++) {
         let light_direction = normalize(light.point_lights[i].position.xyz - in.world_position);
         let reflect_direction = reflect(-light_direction, in.world_normal);
+        
         let diffuse_strength = max(dot(in.world_normal, light_direction), 0.0);
-        diffuse_color += light.point_lights[i].color.xyz * diffuse_strength;
+        diffuse_color += light.point_lights[i].color * diffuse_strength;
+
+        let specular_strength = pow(max(dot(view_direction, reflect_direction), 0.0), shininess);
+        specular_color += light.point_lights[i].color * specular_strength;
     }
-
-    let diffuse_texture_color = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords);
-
-    //let specular_strength = pow(max(dot(view_direction, reflect_direction), 0.0), 32.0);
-    //let specular_color = light.specular_color.xyz * light.specular_color.w * specular_strength; // original
-    let specular_color = vec3<f32>(0.0, 0.0, 0.0);
-
-    let color_rgb = (ambient_color + diffuse_color + specular_color) * diffuse_texture_color.xyz;
-    //let color_rgb = specular_color;
-    out.color = vec4<f32>(color_rgb, diffuse_texture_color.w);
+    diffuse_color *= diffuse_texture_color;
+    specular_color *= specular_texture_color;
+    
+    out.color = ambient_color + diffuse_color + specular_color;
+    out.color.w = 1.0;
 
     return out;
 }

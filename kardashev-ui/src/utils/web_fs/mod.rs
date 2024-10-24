@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod database;
 pub mod file_lock;
 pub mod path;

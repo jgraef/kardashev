@@ -107,14 +107,3 @@ impl<'a, V> Iterator for PreparedBatch<'a, V> {
         self.batch_items.next()
     }
 }
-
-fn create_instance_buffer<I>(backend: &Backend, size: usize) -> wgpu::Buffer {
-    tracing::debug!(size, "allocating instance buffer");
-
-    backend.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("instance buffer"),
-        size: (size * std::mem::size_of::<I>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}

@@ -9,7 +9,7 @@ use kardashev_client::{
 };
 use kardashev_protocol::assets::{
     self as dist,
-    AssetId,
+    AssetId, WindingOrder,
 };
 pub use kardashev_protocol::assets::{
     MeshData as CpuMesh,
@@ -175,6 +175,10 @@ fn load_mesh_to_gpu(
             "trying to load mesh with incompatible primitive topology: {:?}",
             mesh.primitive_topology
         );
+    }
+    if mesh.winding_order != WindingOrder::CounterClockwise {
+        // todo: this can be fixed by just reversing the indices
+        todo!("trying to load mesh with incompatible winding order: {:?}", mesh.winding_order);
     }
 
     let vertex_buffer = backend

@@ -201,7 +201,6 @@ fn create_staging_bind_group(
 #[derive(Debug)]
 struct ToneMapPipeline {
     bind_group_layout: wgpu::BindGroupLayout,
-    pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -287,7 +286,6 @@ impl ToneMapPipeline {
 
         Self {
             bind_group_layout,
-            pipeline_layout,
             pipeline,
         }
     }

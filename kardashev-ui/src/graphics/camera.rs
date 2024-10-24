@@ -19,37 +19,15 @@ use crate::{
 
 #[derive(Debug)]
 pub struct CameraProjection {
-    pub aspect: f32,
-    pub fovy: f32,
-    pub z_near: f32,
-    pub z_far: f32,
-
     pub projection_matrix: Perspective3<f32>,
 }
 
 impl CameraProjection {
     pub fn new(aspect: f32, fovy: f32, z_near: f32, z_far: f32) -> Self {
         Self {
-            aspect,
-            fovy,
-            z_near,
-            z_far,
-            projection_matrix: camera_matrix(aspect, fovy, z_near, z_far),
+            projection_matrix:  Perspective3::new(aspect, fovy, z_near, z_far),
         }
     }
-
-    pub fn set_aspect(&mut self, aspect: f32) {
-        self.aspect = aspect;
-        self.recalculate_matrix();
-    }
-
-    pub fn recalculate_matrix(&mut self) {
-        self.projection_matrix = camera_matrix(self.aspect, self.fovy, self.z_near, self.z_far);
-    }
-}
-
-fn camera_matrix(aspect: f32, fovy: f32, z_near: f32, z_far: f32) -> Perspective3<f32> {
-    Perspective3::new(aspect, fovy, z_near, z_far)
 }
 
 #[derive(Clone, Copy, Debug)]

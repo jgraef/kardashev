@@ -11,7 +11,9 @@ use leptos::{
 };
 use nalgebra::{
     Point3,
+    Similarity3,
     Translation3,
+    UnitQuaternion,
     Vector3,
 };
 use palette::WithAlpha;
@@ -46,6 +48,7 @@ use crate::{
             RenderTarget,
         },
         hdr::CreateToneMapPass,
+        light::PointLight,
         pbr::{
             CreatePbrRenderPipeline,
             PbrRenderPipeline,
@@ -61,7 +64,10 @@ use crate::{
             AttachedRenderPass,
             CreateRenderPass,
         },
-        transform::Transform,
+        transform::{
+            Parent,
+            Transform,
+        },
         Surface,
     },
     input::{
@@ -110,7 +116,7 @@ pub fn WorldView() -> impl IntoView {
         let _ = world.run(move |system_context| {
             let entity = system_context.world.spawn((
                 Label::new_static("map camera"),
-                Transform::look_at(Point3::new(0., -2., 5.), Point3::origin()),
+                Transform::look_at(Point3::new(0., 0., 5.), Point3::origin(), Vector3::y()),
                 CameraProjection::new(aspect, PI / 3.0, 0.1, 100.),
                 ClearColor::new(palette::named::BLACK.into_format().with_alpha(1.0)),
                 WorldViewCameraController {
@@ -126,6 +132,16 @@ pub fn WorldView() -> impl IntoView {
                 },
                 render_target,
                 render_pass,
+            ));
+
+            let _light = system_context.world.spawn((
+                Transform {
+                    model_matrix: Similarity3::default(),
+                },
+                Parent { entity },
+                PointLight {
+                    color: palette::named::WHITE.into_format(),
+                },
             ));
 
             camera_entity.set_value(Some(entity));
@@ -146,7 +162,7 @@ pub fn WorldView() -> impl IntoView {
                             .world
                             .get::<&mut CameraProjection>(camera_entity)
                             .unwrap();
-                        camera.set_aspect(aspect);
+                        camera.projection_matrix.set_aspect(aspect);
                     });
                 }
             }
@@ -277,7 +293,19 @@ fn world_view_camera_controller_system(system_context: &mut SystemContext) {
                             }
 
                             if controller.state.mouse.buttons.is_down(MouseButton::Right) {
-                                // todo
+                                let world_delta =
+                                    camera_projection.projection_matrix.unproject_point(
+                                        &Point3::new(delta.x, -delta.y, controller.z_mouse),
+                                    );
+                                let yaw = (world_delta.x / controller.z_mouse).asin();
+                                let pitch = (world_delta.y / controller.z_mouse).asin();
+
+                                camera_transform.model_matrix.isometry.rotation *=
+                                    UnitQuaternion::from_axis_angle(&-Vector3::y_axis(), yaw)
+                                        * UnitQuaternion::from_axis_angle(
+                                            &Vector3::x_axis(),
+                                            pitch,
+                                        );
                             }
                         }
                         MouseEvent::Wheel { delta, .. } => {

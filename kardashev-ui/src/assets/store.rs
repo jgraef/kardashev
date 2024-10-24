@@ -39,7 +39,7 @@ impl AssetStore {
         let guard = self.lock_file.lock_write().await;
         AssetStoreGuard {
             web_fs: self.web_fs.clone(),
-            guard,
+            _guard: guard,
         }
     }
 }
@@ -47,7 +47,7 @@ impl AssetStore {
 #[derive(Debug)]
 pub struct AssetStoreGuard {
     web_fs: WebFs,
-    guard: FileLockWriteGuard,
+    _guard: FileLockWriteGuard,
 }
 
 impl Deref for AssetStoreGuard {
