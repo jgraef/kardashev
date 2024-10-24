@@ -1,12 +1,26 @@
 #import camera.wgsl::Camera;
 #import light.wgsl::Lights;
-#import render_3d.wgsl::{VertexInput, InstanceInput, VertexOutput, vs_main_inner};
+#import render_3d.wgsl::{VertexInput, InstanceInput, vs_main_inner};
 
 @group(1) @binding(0)
 var<uniform> camera: Camera;
 
 @group(2) @binding(0)
 var<uniform> light: Lights;
+
+struct InstanceInput {
+    @location(3) model_transform_a: vec4<f32>,
+    @location(4) model_transform_b: vec4<f32>,
+    @location(5) model_transform_c: vec4<f32>,
+    @location(6) model_transform_d: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) tex_coords: vec2<f32>,
+    @location(1) world_position: vec3<f32>,
+    @location(2) world_normal: vec3<f32>,
+}
 
 struct FragmentOutput {
     @location(0) color: vec4<f32>,
@@ -34,7 +48,19 @@ fn vs_main(
     model: VertexInput,
     instance: InstanceInput,
 ) -> VertexOutput {
-    return vs_main_inner(model, instance, camera);
+    let model_transform = mat4x4<f32>(
+        instance.model_transform_a,
+        instance.model_transform_b,
+        instance.model_transform_c,
+        instance.model_transform_d,
+    );
+    let inner = vs_main_inner(model, model_transform, camera);
+    var out: VertexOutput;
+    out.clip_position = inner.clip_position;
+    out.tex_coords = inner.tex_coords;
+    out.world_position = inner.world_position;
+    out.world_normal = inner.world_normal;
+    return out;
 }
 
 

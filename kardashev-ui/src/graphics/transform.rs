@@ -1,6 +1,11 @@
 use hecs::Entity;
 use nalgebra::{
-    Point3, Similarity, Similarity3, Translation3, Unit, UnitQuaternion, Vector3
+    Point3,
+    Similarity3,
+    Translation3,
+    Unit,
+    UnitQuaternion,
+    Vector3,
 };
 
 use crate::ecs::{
@@ -16,12 +21,17 @@ pub struct Transform {
 impl Transform {
     pub fn from_position(position: Point3<f32>) -> Self {
         Self {
-            model_matrix: Similarity3::from_parts(Translation3::from(position.coords), UnitQuaternion::identity(), 1.0)
+            model_matrix: Similarity3::from_parts(
+                Translation3::from(position.coords),
+                UnitQuaternion::identity(),
+                1.0,
+            ),
         }
     }
 
     pub fn look_at(eye: Point3<f32>, look_at: Point3<f32>, up: Vector3<f32>) -> Self {
-        // according to `Unit:face_towards` this needs to be `look_at - eye`, but our Z axis is reversed, so it needs to be this way.
+        // according to `Unit:face_towards` this needs to be `look_at - eye`, but our Z
+        // axis is reversed, so it needs to be this way.
         let dir = &eye - &look_at;
 
         let quaternion = Unit::face_towards(&dir, &up);

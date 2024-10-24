@@ -1,7 +1,8 @@
 use kardashev_protocol::assets::{
     MeshData,
     PrimitiveTopology,
-    Vertex, WindingOrder,
+    Vertex,
+    WindingOrder,
 };
 use nalgebra::{
     Vector2,

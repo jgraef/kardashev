@@ -1,6 +1,6 @@
 [materials.796e953f-3985-4cc2-994b-ff74aaba2fe9]
 label = "test01"
-diffuse = { path = "test01.png" }
+diffuse = { texture = { path = "test01.png" }}
 
 [textures.04332e33-273f-4d12-9993-f04355268721]
 label = "test-cube"
@@ -8,7 +8,7 @@ path = "cube_texture.png"
 
 [materials.cbef3406-54ae-4832-bebf-27c3ac9e130c]
 label = "test-cube"
-ambient = "04332e33-273f-4d12-9993-f04355268721"
-diffuse = "04332e33-273f-4d12-9993-f04355268721"
-specular = "04332e33-273f-4d12-9993-f04355268721"
-albedo = "04332e33-273f-4d12-9993-f04355268721"
+ambient = { texture = "04332e33-273f-4d12-9993-f04355268721" }
+diffuse = { texture = "04332e33-273f-4d12-9993-f04355268721" }
+specular = { texture = "04332e33-273f-4d12-9993-f04355268721" }
+#albedo = { texture = "04332e33-273f-4d12-9993-f04355268721" }

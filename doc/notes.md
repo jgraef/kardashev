@@ -15,3 +15,4 @@
   - [impostors](https://paroj.github.io/gltut/Illumination/Tutorial%2013.html)
   - [SIGGRAPH 2010 Course: Physically-Based Shading Models in Film and Game Production](https://renderwonk.com/publications/s2010-shading-course/)
  - Barnes-Hut algorithm for n-body systems?
+ - neat textures: https://www.sharetextures.com/textures

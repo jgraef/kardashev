@@ -1,7 +1,10 @@
 //pub mod teapot;
 pub mod shape;
 
-use std::sync::Arc;
+use std::{
+    fmt::Display,
+    sync::Arc,
+};
 
 use kardashev_client::{
     AssetClient,
@@ -9,7 +12,8 @@ use kardashev_client::{
 };
 use kardashev_protocol::assets::{
     self as dist,
-    AssetId, WindingOrder,
+    AssetId,
+    WindingOrder,
 };
 pub use kardashev_protocol::assets::{
     MeshData as CpuMesh,
@@ -84,6 +88,27 @@ impl Mesh {
                 )?)))
             }
         })
+    }
+
+    pub fn with_asset_id(mut self, asset_id: AssetId) -> Self {
+        self.asset_id = Some(asset_id);
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Display) -> Self {
+        self.label = Some(label.to_string());
+        self
+    }
+}
+
+impl From<CpuMesh> for Mesh {
+    fn from(mesh: CpuMesh) -> Self {
+        Mesh {
+            asset_id: None,
+            label: None,
+            cpu: Some(Arc::new(mesh)),
+            gpu: PerBackend::default(),
+        }
     }
 }
 
@@ -178,7 +203,10 @@ fn load_mesh_to_gpu(
     }
     if mesh.winding_order != WindingOrder::CounterClockwise {
         // todo: this can be fixed by just reversing the indices
-        todo!("trying to load mesh with incompatible winding order: {:?}", mesh.winding_order);
+        todo!(
+            "trying to load mesh with incompatible winding order: {:?}",
+            mesh.winding_order
+        );
     }
 
     let vertex_buffer = backend
@@ -208,17 +236,6 @@ fn load_mesh_to_gpu(
         index_buffer,
         num_indices: mesh.indices.len().try_into().unwrap(),
     })
-}
-
-impl From<CpuMesh> for Mesh {
-    fn from(mesh: CpuMesh) -> Self {
-        Mesh {
-            asset_id: None,
-            label: None,
-            cpu: Some(Arc::new(mesh)),
-            gpu: PerBackend::default(),
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]

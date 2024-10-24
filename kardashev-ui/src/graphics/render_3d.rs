@@ -23,10 +23,10 @@ use crate::{
             PointLight,
         },
         material::{
-            CpuMaterial,
             GpuMaterial,
             GpuMaterialId,
             Material,
+            PipelineMaterial,
         },
         mesh::{
             GpuMesh,
@@ -41,12 +41,12 @@ use crate::{
         },
         transform::GlobalTransform,
         utils::{
-            srgb_to_array4,
-            srgba_to_wgpu,
             vector3_to_array4,
             wgpu_buffer_size,
             GpuResourceCache,
             HasVertexBufferLayout,
+            Srgb32Ext,
+            Srgba64Ext,
         },
         Backend,
         SurfaceSize,
@@ -212,9 +212,7 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: clear_color
-                                .map(|c| {
-                                    wgpu::LoadOp::Clear(srgba_to_wgpu(c.clear_color.into_format()))
-                                })
+                                .map(|c| wgpu::LoadOp::Clear(c.clear_color.into_format().as_wgpu()))
                                 .unwrap_or(wgpu::LoadOp::Load),
                             store: wgpu::StoreOp::Store,
                         },
@@ -319,10 +317,11 @@ impl<'a> Render3dPipelineContext<'a> {
             .set_bind_group(bind_group_index, &self.light_bind_group, &[]);
     }
 
-    pub fn batch_meshes_with_material<M: CpuMaterial>(
+    pub fn batch_meshes_with_material<M: PipelineMaterial, I: Pod>(
         &mut self,
-        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, Instance>,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, I>,
         material_bind_group_layout: &wgpu::BindGroupLayout,
+        make_instance: impl Fn(&GlobalTransform, &M) -> I,
     ) {
         tracing::trace!("batching");
 
@@ -337,12 +336,14 @@ impl<'a> Render3dPipelineContext<'a> {
         for (_entity, (transform, mesh, material)) in render_entities.iter() {
             // todo: handle errors
 
-            let Ok(mesh) = mesh.gpu(&self.backend, gpu_resource_cache)
+            let instance = make_instance(transform, &material.cpu);
+
+            let Ok(mesh_gpu) = mesh.gpu(&self.backend, gpu_resource_cache)
             else {
                 continue;
             };
 
-            let Ok(material) = material.gpu(
+            let Ok(material_gpu) = material.gpu(
                 &self.backend,
                 gpu_resource_cache,
                 material_bind_group_layout,
@@ -353,23 +354,23 @@ impl<'a> Render3dPipelineContext<'a> {
 
             draw_batcher.push(
                 MeshMaterialPairKey {
-                    mesh: mesh.get().id(),
-                    material: material.get().id(),
+                    mesh: mesh_gpu.get().id(),
+                    material: material_gpu.get().id(),
                 },
                 || {
                     MeshMaterialPair {
-                        mesh: mesh.clone(),
-                        material: material.clone(),
+                        mesh: mesh_gpu.clone(),
+                        material: material_gpu.clone(),
                     }
                 },
-                Instance::from_transform(transform),
+                instance,
             );
         }
     }
 
-    pub fn draw_batched_meshes_with_materials<M: CpuMaterial>(
+    pub fn draw_batched_meshes_with_materials<M: PipelineMaterial, I: Pod>(
         &mut self,
-        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, Instance>,
+        draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, I>,
         instance_buffer_slot: u32,
         vertex_buffer_slot: u32,
         material_bind_group_index: u32,
@@ -488,23 +489,24 @@ pub const MAX_POINT_LIGHTS: usize = 16;
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
 struct LightUniform {
-    pub ambient_light: [f32; 4],
+    pub ambient_light: [f32; 3],
     pub num_point_lights: u32,
-    _padding: [u32; 3],
     pub point_lights: [PointLightUniform; MAX_POINT_LIGHTS],
 }
 
 impl LightUniform {
     pub fn set_ambient_color(&mut self, color: Srgb<f32>) {
-        self.ambient_light = srgb_to_array4(color);
+        self.ambient_light = color.as_array3();
     }
 
     pub fn add_point_light(&mut self, position: Point3<f32>, color: Srgb<f32>) -> bool {
         let index: usize = self.num_point_lights.try_into().unwrap();
         if index < MAX_POINT_LIGHTS {
             self.point_lights[index] = PointLightUniform {
-                position: vector3_to_array4(position.coords),
-                color: srgb_to_array4(color),
+                position: position.coords.as_slice().try_into().unwrap(),
+                _padding0: 0,
+                color: color.as_array3(),
+                _padding1: 0,
             };
             self.num_point_lights += 1;
             true
@@ -518,82 +520,10 @@ impl LightUniform {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
 struct PointLightUniform {
-    pub position: [f32; 4],
-    pub color: [f32; 4],
-}
-
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-#[repr(C)]
-pub struct Instance {
-    pub model_transform: [f32; 16],
-    // note: we're using the trick mentioned here[1] to rotate the vertex normal by the rotation of
-    // the model matrix: https://sotrh.github.io/learn-wgpu/intermediate/tutorial10-lighting/#the-normal-matrix
-    //pub normal: [f32; 9],
-}
-
-impl Instance {
-    pub fn from_transform(transform: &GlobalTransform) -> Self {
-        Self {
-            model_transform: transform.as_homogeneous_matrix_array(),
-            /*normal: transform
-            .model_matrix
-            .isometry
-            .rotation
-            .to_rotation_matrix()
-            .matrix()
-            .as_slice()
-            .try_into()
-            .expect("convert rotation matrix to array"),*/
-        }
-    }
-}
-
-impl HasVertexBufferLayout for Instance {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // model transform
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // normal
-                /*wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
-                    shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
-                    shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x3,
-                },*/
-            ],
-        }
-    }
+    pub position: [f32; 3],
+    _padding0: u32,
+    pub color: [f32; 3],
+    _padding1: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

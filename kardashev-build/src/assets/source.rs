@@ -7,6 +7,7 @@ use kardashev_protocol::assets::{
     AssetId,
     TextureFormat,
 };
+use palette::Srgb;
 use serde::{
     Deserialize,
     Serialize,
@@ -151,11 +152,12 @@ impl From<AtlasDef> for Option<AtlasBuilderId> {
 pub struct Material {
     pub label: Option<String>,
     pub normal: Option<AssetIdOrInline<Texture>>,
-    pub ambient: Option<AssetIdOrInline<Texture>>,
-    pub diffuse: Option<AssetIdOrInline<Texture>>,
-    pub specular: Option<AssetIdOrInline<Texture>>,
-    pub shininess: Option<AssetIdOrInline<Texture>>,
-    pub dissolve: Option<AssetIdOrInline<Texture>>,
+    pub ambient: Option<MaterialColorTexture>,
+    pub diffuse: Option<MaterialColorTexture>,
+    pub specular: Option<MaterialColorTexture>,
+    pub shininess: Option<MaterialScalarTexture>,
+    pub dissolve: Option<MaterialScalarTexture>,
+    pub emissive: Option<MaterialColorTexture>,
     pub albedo: Option<AssetIdOrInline<Texture>>,
     pub metalness: Option<AssetIdOrInline<Texture>>,
     pub roughness: Option<AssetIdOrInline<Texture>>,
@@ -188,6 +190,21 @@ pub enum AssetIdOrInline<T> {
     Inline(T),
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialColorTexture {
+    #[serde(alias = "color")]
+    pub tint: Option<Srgb<f32>>,
+    pub texture: Option<AssetIdOrInline<Texture>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialScalarTexture {
+    pub value: Option<f32>,
+    pub texture: Option<AssetIdOrInline<Texture>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialProperty {
     Normal,
@@ -196,6 +213,7 @@ pub enum MaterialProperty {
     Specular,
     Shininess,
     Dissolve,
+    Emissive,
     Albedo,
     Metalness,
     Roughness,

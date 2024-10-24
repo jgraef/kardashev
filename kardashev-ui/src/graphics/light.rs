@@ -9,3 +9,9 @@ pub struct AmbientLight {
 pub struct PointLight {
     pub color: Srgb<f32>,
 }
+
+impl PointLight {
+    pub fn new(color: Srgb<f32>) -> Self {
+        Self { color }
+    }
+}

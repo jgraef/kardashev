@@ -33,21 +33,44 @@ pub fn wgpu_buffer_size<T>() -> u64 {
     padded_size
 }
 
-pub fn srgba_to_wgpu(color: Srgba<f64>) -> wgpu::Color {
-    wgpu::Color {
-        r: color.red,
-        g: color.green,
-        b: color.blue,
-        a: color.alpha,
+pub trait Srgba64Ext {
+    fn as_wgpu(&self) -> wgpu::Color;
+}
+
+impl Srgba64Ext for Srgba<f64> {
+    fn as_wgpu(&self) -> wgpu::Color {
+        wgpu::Color {
+            r: self.red,
+            g: self.green,
+            b: self.blue,
+            a: self.alpha,
+        }
     }
 }
 
-pub fn srgba_to_array4<T: Copy>(color: Srgba<T>) -> [T; 4] {
-    [color.red, color.green, color.blue, color.alpha]
+pub trait Srgba32Ext {
+    fn as_array4(&self) -> [f32; 4];
 }
 
-pub fn srgb_to_array4<T: Copy + Default>(color: Srgb<T>) -> [T; 4] {
-    [color.red, color.green, color.blue, Default::default()]
+impl Srgba32Ext for Srgba<f32> {
+    fn as_array4(&self) -> [f32; 4] {
+        [self.red, self.green, self.blue, self.alpha]
+    }
+}
+
+pub trait Srgb32Ext {
+    fn as_array3(&self) -> [f32; 3];
+    fn as_array4(&self) -> [f32; 4];
+}
+
+impl Srgb32Ext for Srgb<f32> {
+    fn as_array3(&self) -> [f32; 3] {
+        [self.red, self.green, self.blue]
+    }
+
+    fn as_array4(&self) -> [f32; 4] {
+        [self.red, self.green, self.blue, 1.0]
+    }
 }
 
 pub fn vector3_to_array4<T: Copy + Default>(vector: Vector3<T>) -> [T; 4] {

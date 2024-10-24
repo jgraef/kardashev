@@ -46,7 +46,7 @@ pub struct Material<C> {
     pub gpu: PerBackend<Arc<ThreadLocalCell<GpuMaterial<C>>>>,
 }
 
-impl<C: CpuMaterial> Material<C> {
+impl<C: PipelineMaterial> Material<C> {
     pub fn gpu(
         &mut self,
         backend: &Backend,
@@ -87,7 +87,7 @@ impl<C> MaybeHasAssetId for Material<C> {
     }
 }
 
-impl<C: CpuMaterial> LoadFromAsset for Material<C> {
+impl<C: PipelineMaterial> LoadFromAsset for Material<C> {
     type Dist = dist::Material;
     type Error = MaterialError;
     type Args = ();
@@ -109,7 +109,7 @@ impl<C: CpuMaterial> LoadFromAsset for Material<C> {
 
 // todo: rename. would like to call it `Material`, but we also have the struct
 // `Material`
-pub trait CpuMaterial: Send + Sync + Sized + 'static {
+pub trait PipelineMaterial: Send + Sync + Sized + 'static {
     fn load_from_server<'a, 'b: 'a>(
         asset_id: AssetId,
         context: &'a mut LoadAssetContext<'b>,

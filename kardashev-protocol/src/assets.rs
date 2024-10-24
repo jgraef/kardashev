@@ -25,6 +25,7 @@ use chrono::{
     DateTime,
     Utc,
 };
+use palette::Srgb;
 use serde::{
     de::DeserializeOwned,
     Deserialize,
@@ -152,33 +153,55 @@ pub struct Material {
 
     // both
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub normal: Option<AssetId>,
+    pub normal_texture: Option<AssetId>,
 
     // blinn-phong
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ambient: Option<AssetId>,
+    pub ambient_texture: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diffuse: Option<AssetId>,
+    pub ambient_color: Option<Srgb<f32>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub specular: Option<AssetId>,
+    pub diffuse_texture: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shininess: Option<AssetId>,
+    pub diffuse_color: Option<Srgb<f32>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dissolve: Option<AssetId>,
+    pub specular_texture: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specular_color: Option<Srgb<f32>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shininess_texture: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shininess: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dissolve_texture: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dissolve: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emissive_texture: Option<AssetId>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emissive_color: Option<Srgb<f32>>,
 
     // pbr
+    // todo: colors
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub albedo: Option<AssetId>,
+    pub albedo_texture: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metalness: Option<AssetId>,
+    pub metalness_texture: Option<AssetId>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub roughness: Option<AssetId>,
+    pub roughness_texture: Option<AssetId>,
 }
 
 impl HasAssetId for Material {

@@ -25,7 +25,7 @@ pub struct CameraProjection {
 impl CameraProjection {
     pub fn new(aspect: f32, fovy: f32, z_near: f32, z_far: f32) -> Self {
         Self {
-            projection_matrix:  Perspective3::new(aspect, fovy, z_near, z_far),
+            projection_matrix: Perspective3::new(aspect, fovy, z_near, z_far),
         }
     }
 }

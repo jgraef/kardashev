@@ -139,9 +139,9 @@ pub fn WorldView() -> impl IntoView {
                     model_matrix: Similarity3::default(),
                 },
                 Parent { entity },
-                PointLight {
+                /*PointLight {
                     color: palette::named::WHITE.into_format(),
-                },
+                },*/
             ));
 
             camera_entity.set_value(Some(entity));

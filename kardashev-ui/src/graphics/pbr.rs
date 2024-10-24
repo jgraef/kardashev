@@ -1,3 +1,7 @@
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
@@ -17,14 +21,13 @@ use crate::{
         material::{
             get_fallback,
             BindGroupBuilder,
-            CpuMaterial,
             GpuMaterial,
             MaterialError,
+            PipelineMaterial,
         },
         render_3d::{
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
-            Instance,
             MeshMaterialPair,
             MeshMaterialPairKey,
             Render3dPipeline,
@@ -150,9 +153,14 @@ impl Render3dPipeline for PbrRenderPipeline {
         pipeline_context.render_pass.set_pipeline(&self.pipeline);
         pipeline_context.bind_camera_uniform(1);
         pipeline_context.bind_light_uniform(2);
-        pipeline_context.batch_meshes_with_material::<PbrMaterial>(
+        pipeline_context.batch_meshes_with_material::<PbrMaterial, Instance>(
             &mut self.draw_batcher,
             &self.material_bind_group_layout,
+            |transform, _| {
+                Instance {
+                    model_transform: transform.as_homogeneous_matrix_array(),
+                }
+            },
         );
         pipeline_context.draw_batched_meshes_with_materials(&mut self.draw_batcher, 1, 0, 0);
     }
@@ -166,7 +174,7 @@ pub struct PbrMaterial {
     pub roughness: Option<Texture>,
 }
 
-impl CpuMaterial for PbrMaterial {
+impl PipelineMaterial for PbrMaterial {
     async fn load_from_server<'a, 'b: 'a>(
         asset_id: AssetId,
         mut context: &'a mut LoadAssetContext<'b>,
@@ -192,10 +200,10 @@ impl CpuMaterial for PbrMaterial {
             }
         }
 
-        let albedo = load_material_texture(dist.albedo, &mut context).await?;
-        let normal = load_material_texture(dist.normal, &mut context).await?;
-        let metalness = load_material_texture(dist.metalness, &mut context).await?;
-        let roughness = load_material_texture(dist.roughness, &mut context).await?;
+        let albedo = load_material_texture(dist.albedo_texture, &mut context).await?;
+        let normal = load_material_texture(dist.normal_texture, &mut context).await?;
+        let metalness = load_material_texture(dist.metalness_texture, &mut context).await?;
+        let roughness = load_material_texture(dist.roughness_texture, &mut context).await?;
 
         tracing::debug!(%asset_id, "material loaded");
 
@@ -232,5 +240,43 @@ impl CpuMaterial for PbrMaterial {
             });
 
         Ok(GpuMaterial::new(bind_group))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[repr(C)]
+pub struct Instance {
+    pub model_transform: [f32; 16],
+}
+
+impl HasVertexBufferLayout for Instance {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // model transform
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        }
     }
 }

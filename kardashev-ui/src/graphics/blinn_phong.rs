@@ -1,8 +1,13 @@
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use kardashev_protocol::assets::{
     self as dist,
     AssetId,
     Vertex,
 };
+use palette::Srgb;
 
 use crate::{
     assets::{
@@ -17,14 +22,13 @@ use crate::{
         material::{
             get_fallback,
             BindGroupBuilder,
-            CpuMaterial,
             GpuMaterial,
             MaterialError,
+            PipelineMaterial,
         },
         render_3d::{
             CreateRender3dPipeline,
             CreateRender3dPipelineContext,
-            Instance,
             MeshMaterialPair,
             MeshMaterialPairKey,
             Render3dPipeline,
@@ -38,6 +42,7 @@ use crate::{
             GpuResourceCache,
             HasVertexBufferLayout,
             MaterialBindGroupLayoutBuilder,
+            Srgb32Ext,
         },
     },
 };
@@ -61,7 +66,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
             });
 
         let mut material_bind_group_layout_builder = MaterialBindGroupLayoutBuilder::default();
-        for _ in 0..6 {
+        for _ in 0..7 {
             material_bind_group_layout_builder.push_view_and_sampler();
         }
 
@@ -152,9 +157,15 @@ impl Render3dPipeline for BlinnPhongRenderPipeline {
         pipeline_context.render_pass.set_pipeline(&self.pipeline);
         pipeline_context.bind_camera_uniform(1);
         pipeline_context.bind_light_uniform(2);
-        pipeline_context.batch_meshes_with_material::<BlinnPhongMaterial>(
+        pipeline_context.batch_meshes_with_material::<BlinnPhongMaterial, Instance>(
             &mut self.draw_batcher,
             &self.material_bind_group_layout,
+            |transform, material| {
+                Instance {
+                    model_transform: transform.as_homogeneous_matrix_array(),
+                    material: MaterialInstanceData::from_material(material),
+                }
+            },
         );
         pipeline_context.draw_batched_meshes_with_materials(&mut self.draw_batcher, 1, 0, 0);
     }
@@ -162,15 +173,22 @@ impl Render3dPipeline for BlinnPhongRenderPipeline {
 
 #[derive(Clone, Debug, Default)]
 pub struct BlinnPhongMaterial {
-    pub ambient: Option<Texture>,
-    pub diffuse: Option<Texture>,
-    pub specular: Option<Texture>,
-    pub normal: Option<Texture>,
-    pub shininess: Option<Texture>,
-    pub dissolve: Option<Texture>,
+    pub ambient_texture: Option<Texture>,
+    pub ambient_color: Option<Srgb<f32>>,
+    pub diffuse_texture: Option<Texture>,
+    pub diffuse_color: Option<Srgb<f32>>,
+    pub specular_texture: Option<Texture>,
+    pub specular_color: Option<Srgb<f32>>,
+    pub normal_texture: Option<Texture>,
+    pub shininess_texture: Option<Texture>,
+    pub shininess: Option<f32>,
+    pub dissolve_texture: Option<Texture>,
+    pub dissolve: Option<f32>,
+    pub emissive_texture: Option<Texture>,
+    pub emissive_color: Option<Srgb<f32>>,
 }
 
-impl CpuMaterial for BlinnPhongMaterial {
+impl PipelineMaterial for BlinnPhongMaterial {
     async fn load_from_server<'a, 'b: 'a>(
         asset_id: AssetId,
         mut context: &'a mut LoadAssetContext<'b>,
@@ -198,22 +216,30 @@ impl CpuMaterial for BlinnPhongMaterial {
             }
         }
 
-        let ambient = load_material_texture(dist.ambient, &mut context).await?;
-        let diffuse = load_material_texture(dist.diffuse, &mut context).await?;
-        let specular = load_material_texture(dist.specular, &mut context).await?;
-        let normal = load_material_texture(dist.normal, &mut context).await?;
-        let shininess = load_material_texture(dist.shininess, &mut context).await?;
-        let dissolve = load_material_texture(dist.dissolve, &mut context).await?;
+        let ambient_texture = load_material_texture(dist.ambient_texture, &mut context).await?;
+        let diffuse_texture = load_material_texture(dist.diffuse_texture, &mut context).await?;
+        let specular_texture = load_material_texture(dist.specular_texture, &mut context).await?;
+        let normal_texture = load_material_texture(dist.normal_texture, &mut context).await?;
+        let shininess_texture = load_material_texture(dist.shininess_texture, &mut context).await?;
+        let dissolve_texture = load_material_texture(dist.dissolve_texture, &mut context).await?;
+        let emissive_texture = load_material_texture(dist.emissive_texture, &mut context).await?;
 
         tracing::debug!(%asset_id, "material loaded");
 
         Ok(Self {
-            ambient,
-            diffuse,
-            specular,
-            normal,
-            shininess,
-            dissolve,
+            ambient_texture,
+            ambient_color: dist.ambient_color,
+            diffuse_texture,
+            diffuse_color: dist.diffuse_color,
+            specular_texture,
+            specular_color: dist.specular_color,
+            normal_texture,
+            shininess_texture,
+            shininess: dist.shininess,
+            dissolve_texture,
+            dissolve: dist.dissolve,
+            emissive_texture,
+            emissive_color: dist.emissive_color,
         })
     }
 
@@ -227,13 +253,72 @@ impl CpuMaterial for BlinnPhongMaterial {
         let fallback = get_fallback(backend, cache);
         let fallback = fallback.get();
 
-        let mut bind_group_builder = BindGroupBuilder::<12>::new(backend, cache);
-        bind_group_builder.push(&mut self.ambient, &fallback.pink.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.diffuse, &fallback.pink.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.specular, &fallback.white.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.normal, &fallback.black.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.shininess, &fallback.black.view, &fallback.sampler)?;
-        bind_group_builder.push(&mut self.dissolve, &fallback.black.view, &fallback.sampler)?;
+        let mut bind_group_builder = BindGroupBuilder::<14>::new(backend, cache);
+        bind_group_builder.push(
+            &mut self.ambient_texture,
+            if self.ambient_color.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.pink.view
+            },
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.diffuse_texture,
+            if self.diffuse_color.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.pink.view
+            },
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.specular_texture,
+            if self.specular_color.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.black.view
+            },
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.normal_texture,
+            &fallback.black.view,
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.shininess_texture,
+            if self.shininess.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.black.view
+            },
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.dissolve_texture,
+            if self.dissolve.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.black.view
+            },
+            &fallback.sampler,
+        )?;
+        bind_group_builder.push(
+            &mut self.emissive_texture,
+            if self.emissive_color.is_some() {
+                &fallback.white.view
+            }
+            else {
+                &fallback.black.view
+            },
+            &fallback.sampler,
+        )?;
 
         let bind_group = backend
             .device
@@ -244,5 +329,105 @@ impl CpuMaterial for BlinnPhongMaterial {
             });
 
         Ok(GpuMaterial::new(bind_group))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[repr(C)]
+pub struct MaterialInstanceData {
+    pub ambient_color: [f32; 3],
+    pub diffuse_color: [f32; 3],
+    pub specular_color: [f32; 3],
+    pub emissive_color: [f32; 3],
+    pub shininess: f32,
+    pub dissolve: f32,
+}
+
+impl MaterialInstanceData {
+    pub fn from_material(material: &BlinnPhongMaterial) -> Self {
+        const WHITE: Srgb<f32> = Srgb::new(1.0, 1.0, 1.0);
+        Self {
+            ambient_color: material.ambient_color.unwrap_or(WHITE).as_array3(),
+            diffuse_color: material.diffuse_color.unwrap_or(WHITE).as_array3(),
+            specular_color: material.specular_color.unwrap_or(WHITE).as_array3(),
+            emissive_color: material.emissive_color.unwrap_or(WHITE).as_array3(),
+            shininess: material.shininess.unwrap_or(0.0),
+            dissolve: material.dissolve.unwrap_or(0.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[repr(C)]
+pub struct Instance {
+    pub model_transform: [f32; 16],
+    pub material: MaterialInstanceData,
+}
+
+impl HasVertexBufferLayout for Instance {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // model transform
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // material ambient color
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                // material diffuse color
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                // material specular color
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                // material emissive color
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 25]>() as wgpu::BufferAddress,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                // material shininess
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 28]>() as wgpu::BufferAddress,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // material shininess
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 29]>() as wgpu::BufferAddress,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        }
     }
 }
