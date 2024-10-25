@@ -1,6 +1,6 @@
 use palette::Srgb;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct AmbientLight {
     pub color: Srgb<f32>,
 }

@@ -143,8 +143,7 @@ fn create_world(system_context: &mut SystemContext) {
     ));
 
     let _earth = system_context.world.spawn((
-        Transform::from_position(Point3::new(-5.0, 0.0, 0.0))
-            .with_rotation(UnitQuaternion::from_euler_angles(0.25 * PI, 0.25 * PI, 0.0)),
+        Transform::from_position(Point3::new(-5.0, 0.0, 0.0)),
         sphere,
         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
             "d5b74211-70fb-4b4c-9199-c5aa89b90b01" //"cbef3406-54ae-4832-bebf-27c3ac9e130c"

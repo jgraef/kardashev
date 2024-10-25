@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod blinn_phong;
 pub mod camera;
+pub mod deferred;
 pub mod draw_batch;
 pub mod hdr;
 pub mod light;

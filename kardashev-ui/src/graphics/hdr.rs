@@ -12,9 +12,16 @@ use crate::graphics::{
 };
 
 #[derive(Clone, Copy, Debug)]
+pub enum ToneMap {
+    Aces,
+    Gamma { gamma: f32 }, // todo
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct CreateToneMapPass<P: CreateRenderPass> {
     pub inner: P,
     pub format: wgpu::TextureFormat,
+    pub tone_map: ToneMap,
 }
 
 impl<P: CreateRenderPass> CreateRenderPass for CreateToneMapPass<P> {
@@ -27,7 +34,8 @@ impl<P: CreateRenderPass> CreateRenderPass for CreateToneMapPass<P> {
             surface_format: self.format,
         });
 
-        let tone_mapping = ToneMapPipeline::new(context.backend, context.surface_format);
+        let tone_mapping =
+            ToneMapPipeline::new(self.tone_map, context.backend, context.surface_format);
         let staging = StagingTexture::new(
             context.backend,
             context.surface_size,
@@ -205,7 +213,7 @@ struct ToneMapPipeline {
 }
 
 impl ToneMapPipeline {
-    fn new(backend: &Backend, format: wgpu::TextureFormat) -> Self {
+    fn new(_tone_map: ToneMap, backend: &Backend, format: wgpu::TextureFormat) -> Self {
         let shader = backend
             .device
             .create_shader_module(wgpu::include_wgsl!("hdr.wgsl"));

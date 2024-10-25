@@ -47,7 +47,10 @@ use crate::{
             DontRender,
             RenderTarget,
         },
-        hdr::CreateToneMapPass,
+        hdr::{
+            CreateToneMapPass,
+            ToneMap,
+        },
         pbr::{
             CreatePbrRenderPipeline,
             PbrRenderPipeline,
@@ -107,6 +110,7 @@ pub fn WorldView() -> impl IntoView {
                     },
                 },
                 format: wgpu::TextureFormat::Rgba16Float,
+                tone_map: ToneMap::Aces,
             }
             .create_render_pass_from_surface(&surface),
         );

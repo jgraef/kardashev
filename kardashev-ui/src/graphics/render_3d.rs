@@ -41,13 +41,15 @@ use crate::{
         },
         transform::GlobalTransform,
         utils::{
-            wgpu_buffer_size,
+            batch_meshes_with_material,
+            draw_batched_meshes_with_materials,
             GpuResourceCache,
             Srgb32Ext,
             Srgba64Ext,
+            TextureBuffer,
+            UniformBuffer,
         },
         Backend,
-        SurfaceSize,
     },
     utils::{
         thread_local_cell::ThreadLocalCell,
@@ -67,108 +69,33 @@ impl<P: CreateRender3dPipeline> CreateRenderPass for CreateRender3dPass<P> {
     type RenderPass = Render3dPass<P::Pipeline>;
 
     fn create_render_pass(self, context: &CreateRenderPassContext) -> Self::RenderPass {
-        let camera_buffer = context
-            .backend
-            .device
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("camera buffer"),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-                size: wgpu_buffer_size::<CameraUniform>(),
-            });
+        let camera_buffer = UniformBuffer::new(context.backend);
+        let lights_buffer = UniformBuffer::new(context.backend);
 
-        let camera_bind_group_layout =
-            context
-                .backend
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("camera_bind_group_layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-        let camera_bind_group =
-            context
-                .backend
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &camera_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: camera_buffer.as_entire_binding(),
-                    }],
-                    label: Some("camera_bind_group"),
-                });
-
-        let light_buffer = context
-            .backend
-            .device
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("light buffer"),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-                size: wgpu_buffer_size::<LightUniform>(),
-            });
-
-        let light_bind_group_layout =
-            context
-                .backend
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("light bind group layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-        let light_bind_group =
-            context
-                .backend
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &light_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: light_buffer.as_entire_binding(),
-                    }],
-                    label: None,
-                });
+        let depth_texture = TextureBuffer::new(
+            context.backend,
+            context.surface_size,
+            wgpu::TextureFormat::Depth32Float,
+            Some("depth texture"),
+        );
 
         let pipeline = self
             .create_pipeline
             .create_pipeline(&CreateRender3dPipelineContext {
                 backend: context.backend,
                 surface_format: context.surface_format,
-                depth_texture_format: DepthTexture::FORMAT,
-                camera_bind_group_layout: &camera_bind_group_layout,
-                light_bind_group_layout: &light_bind_group_layout,
+                depth_texture_format: depth_texture.format,
+                camera_bind_group_layout: &camera_buffer.bind_group_layout,
+                light_bind_group_layout: &lights_buffer.bind_group_layout,
             });
 
-        let depth_texture = DepthTexture::new(context.backend, context.surface_size);
         let creation_time = Instant::now();
         let fps = TicksPerSecond::new(Duration::from_secs(1));
 
         Render3dPass {
             pipeline,
             camera_buffer,
-            camera_bind_group,
-            light_buffer,
-            light_bind_group,
+            lights_buffer,
             depth_texture,
             creation_time,
             fps,
@@ -179,11 +106,9 @@ impl<P: CreateRender3dPipeline> CreateRenderPass for CreateRender3dPass<P> {
 #[derive(Debug)]
 pub struct Render3dPass<P> {
     pipeline: P,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    light_buffer: wgpu::Buffer,
-    light_bind_group: wgpu::BindGroup,
-    depth_texture: DepthTexture,
+    camera_buffer: UniformBuffer<CameraUniform>,
+    lights_buffer: UniformBuffer<LightsUniform>,
+    depth_texture: TextureBuffer,
     creation_time: Instant,
     fps: TicksPerSecond,
 }
@@ -191,7 +116,7 @@ pub struct Render3dPass<P> {
 impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
     fn render(&mut self, context: &mut RenderPassContext) {
         self.depth_texture
-            .resize_if_needed(context.target_size, context.backend);
+            .resize(context.backend, context.target_size);
 
         let mut query_camera = context
             .world
@@ -234,14 +159,10 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
             // update camera uniform
             let camera_uniform = CameraUniform::from_camera(camera_projection, camera_transform)
                 .with_time(now.duration_since(self.creation_time).as_secs_f32());
-            context.backend.queue.write_buffer(
-                &self.camera_buffer,
-                0,
-                bytemuck::bytes_of(&camera_uniform),
-            );
+            self.camera_buffer.write(context.backend, &camera_uniform);
 
             // update lights uniform
-            let mut light_uniform = LightUniform::default();
+            let mut light_uniform = LightsUniform::default();
             if let Some(ambient_light) = context.resources.get::<AmbientLight>() {
                 light_uniform.set_ambient_color(ambient_light.color);
             }
@@ -254,17 +175,13 @@ impl<P: Render3dPipeline> RenderPass for Render3dPass<P> {
                     break;
                 }
             }
-            context.backend.queue.write_buffer(
-                &self.light_buffer,
-                0,
-                bytemuck::bytes_of(&light_uniform),
-            );
+            self.lights_buffer.write(context.backend, &light_uniform);
 
             self.pipeline.render(&mut Render3dPipelineContext {
                 backend: &mut context.backend,
                 render_pass: &mut render_pass,
-                camera_bind_group: &self.camera_bind_group,
-                light_bind_group: &self.light_bind_group,
+                camera_bind_group: &self.camera_buffer.bind_group,
+                light_bind_group: &self.lights_buffer.bind_group,
                 world: context.world,
                 resources: context.resources,
             });
@@ -321,49 +238,14 @@ impl<'a> Render3dPipelineContext<'a> {
         material_bind_group_layout: &wgpu::BindGroupLayout,
         make_instance: impl Fn(&GlobalTransform, &M) -> I,
     ) {
-        tracing::trace!("batching");
-
-        let mut render_entities = self
-            .world
-            .query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
-
-        let gpu_resource_cache = self
-            .resources
-            .get_mut_or_insert_default::<GpuResourceCache>();
-
-        for (_entity, (transform, mesh, material)) in render_entities.iter() {
-            // todo: handle errors
-
-            let instance = make_instance(transform, &material.cpu);
-
-            let Ok(mesh_gpu) = mesh.gpu(&self.backend, gpu_resource_cache)
-            else {
-                continue;
-            };
-
-            let Ok(material_gpu) = material.gpu(
-                &self.backend,
-                gpu_resource_cache,
-                material_bind_group_layout,
-            )
-            else {
-                continue;
-            };
-
-            draw_batcher.push(
-                MeshMaterialPairKey {
-                    mesh: mesh_gpu.get().id(),
-                    material: material_gpu.get().id(),
-                },
-                || {
-                    MeshMaterialPair {
-                        mesh: mesh_gpu.clone(),
-                        material: material_gpu.clone(),
-                    }
-                },
-                instance,
-            );
-        }
+        batch_meshes_with_material(
+            &self.world,
+            &mut self.resources,
+            &self.backend,
+            draw_batcher,
+            material_bind_group_layout,
+            make_instance,
+        );
     }
 
     pub fn draw_batched_meshes_with_materials<M: PipelineMaterial, I: Pod>(
@@ -373,72 +255,14 @@ impl<'a> Render3dPipelineContext<'a> {
         vertex_buffer_slot: u32,
         material_bind_group_index: u32,
     ) {
-        if let Some(prepared_batch) = draw_batcher.prepare(self.backend) {
-            self.render_pass
-                .set_vertex_buffer(instance_buffer_slot, prepared_batch.instance_buffer);
-
-            for batch_item in prepared_batch {
-                let mesh = batch_item.value.mesh.get();
-                let material = batch_item.value.material.get();
-
-                self.render_pass
-                    .set_vertex_buffer(vertex_buffer_slot, mesh.vertex_buffer.slice(..));
-                self.render_pass
-                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                self.render_pass.set_bind_group(
-                    material_bind_group_index,
-                    &material.bind_group,
-                    &[],
-                );
-                self.render_pass
-                    .draw_indexed(0..mesh.num_indices as u32, 0, batch_item.range);
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct DepthTexture {
-    pub texture: wgpu::Texture,
-    pub texture_view: wgpu::TextureView,
-}
-
-impl DepthTexture {
-    pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-    pub fn new(backend: &Backend, surface_size: SurfaceSize) -> Self {
-        let size = wgpu::Extent3d {
-            width: surface_size.width,
-            height: surface_size.height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture_descriptor = wgpu::TextureDescriptor {
-            label: Some("depth texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
-
-        let texture = backend.device.create_texture(&texture_descriptor);
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        Self {
-            texture,
-            texture_view,
-        }
-    }
-
-    pub fn resize_if_needed(&mut self, size: SurfaceSize, backend: &Backend) {
-        if SurfaceSize::from_texture(&self.texture) != size {
-            tracing::debug!(?size, "resizing depth texture");
-            *self = DepthTexture::new(backend, size);
-        }
+        draw_batched_meshes_with_materials(
+            &mut self.render_pass,
+            &self.backend,
+            draw_batcher,
+            instance_buffer_slot,
+            vertex_buffer_slot,
+            material_bind_group_index,
+        );
     }
 }
 
@@ -450,7 +274,7 @@ pub struct CameraUniform {
     _padding1: u32,
     pub aspect: f32,
     pub time: f32,
-    _padding2: [u32; 3],
+    _padding2: [u32; 2],
 }
 
 impl CameraUniform {
@@ -486,13 +310,13 @@ pub const MAX_POINT_LIGHTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
-struct LightUniform {
+pub struct LightsUniform {
     pub ambient_light: [f32; 3],
     pub num_point_lights: u32,
     pub point_lights: [PointLightUniform; MAX_POINT_LIGHTS],
 }
 
-impl LightUniform {
+impl LightsUniform {
     pub fn set_ambient_color(&mut self, color: Srgb<f32>) {
         self.ambient_light = color.as_array3();
     }
@@ -500,12 +324,7 @@ impl LightUniform {
     pub fn add_point_light(&mut self, position: Point3<f32>, color: Srgb<f32>) -> bool {
         let index: usize = self.num_point_lights.try_into().unwrap();
         if index < MAX_POINT_LIGHTS {
-            self.point_lights[index] = PointLightUniform {
-                position: position.coords.as_slice().try_into().unwrap(),
-                _padding0: 0,
-                color: color.as_array3(),
-                _padding1: 0,
-            };
+            self.point_lights[index] = PointLightUniform::new(position, color);
             self.num_point_lights += 1;
             true
         }
@@ -517,11 +336,22 @@ impl LightUniform {
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
-struct PointLightUniform {
+pub struct PointLightUniform {
     pub position: [f32; 3],
     _padding0: u32,
     pub color: [f32; 3],
     _padding1: u32,
+}
+
+impl PointLightUniform {
+    pub fn new(position: Point3<f32>, color: Srgb<f32>) -> Self {
+        Self {
+            position: position.coords.as_slice().try_into().unwrap(),
+            _padding0: 0,
+            color: color.as_array3(),
+            _padding1: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
