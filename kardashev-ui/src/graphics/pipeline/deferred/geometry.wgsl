@@ -38,7 +38,9 @@ struct VertexOutput {
 struct FragmentOutput {
     @location(0) position: vec4f,
     @location(1) normal: vec4f,
-    @location(2) diffuse_specular: vec4f,
+    @location(2) diffuse_occlusion: vec4f,
+    @location(3) specular_shininess: vec4f,
+    @location(4) emission: vec4f,
 }
 
 @group(0) @binding(0)
@@ -91,9 +93,10 @@ fn vs_main(
     let world_position = model_transform * vec4f(vertex.position, 1.0);
 
     out.clip_position = globals.view_projection * world_position;
-    out.position = out.clip_position.xyz;
+    out.position = world_position.xyz;
     out.tex_coords = vertex.tex_coords;
     out.normal = (model_transform * vec4f(vertex.normal, 0.0)).xyz;
+    // todo: add contribution from normal texture
         
     out.material_ambient_color = instance.material_ambient_color;
     out.material_diffuse_color = instance.material_diffuse_color;
@@ -105,19 +108,30 @@ fn vs_main(
     return out;
 }
 
-
 @fragment
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
 
     let diffuse = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords).xyz * in.material_diffuse_color;
-    let specular = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords).w;
+    let occlusion = textureSample(material_ambient_texture_view, material_ambient_sampler, in.tex_coords).x * in.material_ambient_color.x;
+    let specular = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords).xyz * in.material_specular_color;
+    let shininess = textureSample(material_shininess_texture_view, material_shininess_sampler, in.tex_coords).x * in.material_shininess;
+    let emission = textureSample(material_emissive_texture_view, material_emissive_sampler, in.tex_coords).xyz * in.material_emissive_color;
 
     out.position = vec4f(in.position, 0.0);
-    out.normal = vec4f(normalize(in.normal), 0.0);
-    out.diffuse_specular = vec4f(
+    out.normal = vec4f(in.normal, 0.0);
+    out.diffuse_occlusion = vec4f(
         diffuse,
-        specular,
+        occlusion,
     );
+    out.specular_shininess = vec4f(
+        specular,
+        shininess,
+    );
+    out.emission = vec4f(
+        emission,
+        0.0,
+    );
+
     return out;
 }

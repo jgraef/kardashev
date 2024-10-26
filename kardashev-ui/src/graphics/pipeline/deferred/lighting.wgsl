@@ -23,7 +23,12 @@ var position_texture: texture_2d<f32>;
 @group(1) @binding(2)
 var normal_texture: texture_2d<f32>;
 @group(1) @binding(3)
-var diffuse_specular_texture: texture_2d<f32>;
+var diffuse_occlusion_texture: texture_2d<f32>;
+@group(1) @binding(4)
+var specular_shininess_texture: texture_2d<f32>;
+@group(1) @binding(5)
+var emission_texture: texture_2d<f32>;
+
 
 @vertex
 fn vs_main(
@@ -45,18 +50,22 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     
     let world_position = textureSample(position_texture, texture_sampler, in.tex_coords).xyz;
     let world_normal = textureSample(normal_texture, texture_sampler, in.tex_coords).xyz;
-    let diffuse_specular = textureSample(diffuse_specular_texture, texture_sampler, in.tex_coords);
-    let diffuse_texture_color = diffuse_specular.xyz;
-    let specular_texture_value = diffuse_specular.w;
+    let diffuse_occlusion = textureSample(diffuse_occlusion_texture, texture_sampler, in.tex_coords);
+    let specular_shininess = textureSample(specular_shininess_texture, texture_sampler, in.tex_coords);
+    let emission = textureSample(emission_texture, texture_sampler, in.tex_coords);
 
-    let view_direction = normalize(world_position.xyz - globals.view_position);
+    let diffuse_texture_color = diffuse_occlusion.xyz;
+    let specular_texture_color = specular_shininess.xyz;
+    let shininess = specular_shininess.w;
     
+    let view_direction = normalize(globals.view_position - world_position);
+    
+    let emission_color = emission.xyz;
+    let ambient_color = globals.ambient_light * diffuse_occlusion.w;
     var diffuse_color = vec3f(0.0);
     var specular_color = vec3f(0.0);
 
-    let shininess = 32.0;
-
-    // spot lights
+    // point lights
     for (var i: u32 = 0; i < globals.num_point_lights; i++) {
         let light_direction = normalize(globals.point_lights[i].position - world_position);
         
@@ -71,9 +80,9 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         specular_color += globals.point_lights[i].color * specular_strength;
     }
     diffuse_color *= diffuse_texture_color;
-    specular_color *= specular_texture_value;
+    specular_color *= specular_texture_color;
     
-    out.color = vec4f(diffuse_color + specular_color, 1.0);
+    out.color = vec4f(emission_color + ambient_color + diffuse_color + specular_color, 1.0);
 
     return out;
 }

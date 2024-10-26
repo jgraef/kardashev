@@ -2,12 +2,7 @@ use std::f32::consts::PI;
 
 use kardashev_style::style;
 use leptos::{
-    component,
-    expect_context,
-    on_cleanup,
-    store_value,
-    view,
-    IntoView,
+    component, create_rw_signal, expect_context, on_cleanup, store_value, view, IntoView, RwSignal, SignalUpdate, SignalWith
 };
 use nalgebra::{
     Point3,
@@ -45,6 +40,7 @@ use crate::{
         },
         pipeline::{
             deferred::{
+                debug::Channel,
                 CreateDeferredPipeline,
                 DeferredPipeline,
             },
@@ -95,7 +91,8 @@ struct Style;
 pub fn WorldView() -> impl IntoView {
     let camera_entity = store_value(None);
     let (tx_mouse, rx_mouse) = mpsc::channel(128);
-    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::ForwardBlinnPhong);
+    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::default());
+    let debug_info = create_rw_signal(DebugInfo::default());
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
@@ -117,6 +114,8 @@ pub fn WorldView() -> impl IntoView {
 
         let world = expect_context::<WorldServer>();
         let _ = world.run(move |system_context| {
+            system_context.resources.insert(debug_info);
+
             let entity = system_context.world.spawn((
                 Label::new_static("map camera"),
                 Transform::look_at(Point3::new(0., 0., 5.), Point3::origin(), Vector3::y()),
@@ -200,6 +199,10 @@ pub fn WorldView() -> impl IntoView {
 
     view! {
         <div class=Style::window>
+            <ul class=Style::debug_overlay>
+                <li>"FPS: " {move || debug_info.with(|debug_info| debug_info.fps)}</li>
+                <li>"Pipeline: " {move || debug_info.with(|debug_info| format!("{:?}", debug_info.which))}</li>
+            </ul>
             <Window on_load on_event />
         </div>
     }
@@ -233,17 +236,73 @@ impl CreatePipeline for CreateWorldViewPipeline {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 enum WhichPipeline {
+    #[default]
     ForwardBlinnPhong,
-    Deferred,
+    Deferred { debug_channel: Option<Channel> },
 }
 
 impl WhichPipeline {
     pub fn toggle(&mut self) {
         *self = match *self {
-            WhichPipeline::ForwardBlinnPhong => WhichPipeline::Deferred,
-            WhichPipeline::Deferred => WhichPipeline::ForwardBlinnPhong,
+            WhichPipeline::ForwardBlinnPhong => {
+                WhichPipeline::Deferred {
+                    debug_channel: None,
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: None,
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Position),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Position),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Normal),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Normal),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Diffuse),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Diffuse),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Occlusion),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Occlusion),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Specular),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Specular),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Shininess),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Shininess),
+            } => {
+                WhichPipeline::Deferred {
+                    debug_channel: Some(Channel::Emission),
+                }
+            }
+            WhichPipeline::Deferred {
+                debug_channel: Some(Channel::Emission),
+            } => WhichPipeline::ForwardBlinnPhong,
         };
     }
 }
@@ -266,7 +325,8 @@ impl RenderPipeline for WorldViewPipeline {
         output: Self::Output<'_>,
     ) {
         match *self.switch.borrow() {
-            WhichPipeline::Deferred => {
+            WhichPipeline::Deferred { debug_channel } => {
+                self.deferred.set_debug(debug_channel);
                 self.deferred.render(context, input, output);
             }
             WhichPipeline::ForwardBlinnPhong => {
@@ -348,9 +408,14 @@ fn world_view_camera_controller_system(system_context: &mut SystemContext) {
                             repeat: false,
                             ..
                         } => {
-                            controller
-                                .switch_pipeline
-                                .send_modify(|which| which.toggle());
+                            let mut which = *controller.switch_pipeline.borrow();
+                            which.toggle();
+                            let _ = controller.switch_pipeline.send(which);
+                            
+                            let debug_info = system_context.resources.get::<RwSignal<DebugInfo>>().unwrap();
+                            debug_info.update(|debug_info| {
+                                debug_info.which = which;
+                            });
                         }
                         _ => {}
                     }
@@ -369,4 +434,10 @@ impl Plugin for MapPlugin {
             .schedule
             .add_system(world_view_camera_controller_system);
     }
+}
+
+#[derive(Debug, Default)]
+struct DebugInfo {
+    fps: f32,
+    which: WhichPipeline,
 }

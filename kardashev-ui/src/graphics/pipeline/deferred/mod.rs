@@ -1,3 +1,4 @@
+pub mod debug;
 pub mod gbuffer;
 pub mod geometry;
 pub mod lighting;
@@ -5,6 +6,10 @@ pub mod lighting;
 use crate::graphics::{
     pipeline::{
         deferred::{
+            debug::{
+                Channel,
+                DebugPipeline,
+            },
             gbuffer::GeometryBuffer,
             geometry::GeometryPipeline,
             lighting::LightingPipeline,
@@ -40,12 +45,16 @@ impl CreatePipeline for CreateDeferredPipeline {
         let geometry_pipeline = GeometryPipeline::new(context, &globals, &geometry_buffer);
         let lighting_pipeline =
             LightingPipeline::new(context, &globals, &geometry_buffer, &output_config);
+        let debug_pipeline =
+            DebugPipeline::new(context, &globals, &geometry_buffer, &output_config);
 
         DeferredPipeline {
             geometry_buffer,
             globals,
             geometry_pipeline,
             lighting_pipeline,
+            debug_pipeline,
+            debug: false,
         }
     }
 }
@@ -56,6 +65,20 @@ pub struct DeferredPipeline {
     globals: UniformBuffer<GlobalsUniform>,
     geometry_pipeline: GeometryPipeline,
     lighting_pipeline: LightingPipeline,
+    debug_pipeline: DebugPipeline,
+    debug: bool,
+}
+
+impl DeferredPipeline {
+    pub fn set_debug(&mut self, channel: Option<Channel>) {
+        if let Some(channel) = channel {
+            self.debug = true;
+            self.debug_pipeline.channel = channel;
+        }
+        else {
+            self.debug = false;
+        }
+    }
 }
 
 impl RenderPipeline for DeferredPipeline {
@@ -75,8 +98,17 @@ impl RenderPipeline for DeferredPipeline {
 
             self.geometry_pipeline
                 .render(context, (input, &self.globals), &self.geometry_buffer);
-            self.lighting_pipeline
-                .render(context, (&self.geometry_buffer, &self.globals), output);
+            if self.debug {
+                self.debug_pipeline
+                    .render(context, (&self.geometry_buffer, &self.globals), output);
+            }
+            else {
+                self.lighting_pipeline.render(
+                    context,
+                    (&self.geometry_buffer, &self.globals),
+                    output,
+                );
+            }
         }
     }
 }

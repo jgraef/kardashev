@@ -16,6 +16,7 @@ use serde::{
 
 use crate::{
     graphics::{
+        pipeline::deferred::gbuffer::GeometryBuffer,
         Config,
         Error,
     },
@@ -43,6 +44,18 @@ impl BackendType {
             BackendType::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
             BackendType::WebGl => wgpu::Backends::GL,
         }
+    }
+
+    pub fn limits(&self) -> wgpu::Limits {
+        let mut limits = match self {
+            BackendType::WebGpu => wgpu::Limits::downlevel_defaults(),
+            BackendType::WebGl => wgpu::Limits::downlevel_webgl2_defaults(),
+        };
+
+        // for the deferred shader
+        limits.max_color_attachment_bytes_per_sample = GeometryBuffer::NUM_TEXTURES as u32 * 16;
+
+        limits
     }
 }
 

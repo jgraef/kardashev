@@ -120,8 +120,8 @@ fn provide_world() {
 }
 
 fn create_world(system_context: &mut SystemContext) {
-    let shape = shape::Sphere::default().mesh().build();
-    //let shape = shape::Cuboid::default().mesh().build();
+    //let shape = shape::Sphere::default().mesh().build();
+    let shape = shape::Cuboid::default().mesh().build();
     let sphere = Mesh::from(shape).with_asset_id(asset_id!("d264e0db-9e26-4cca-8469-3fcb1d674bf5"));
 
     const SUN_LIGHT_COLOR: Srgb<f32> = Srgb::new(1.0, 0.92902, 0.89906);

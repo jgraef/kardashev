@@ -47,10 +47,7 @@ use crate::{
         },
         material::Material,
         mesh::Mesh,
-        pipeline::{
-            deferred::gbuffer::GeometryBuffer,
-            forward::blinn_phong::BlinnPhongMaterial,
-        },
+        pipeline::forward::blinn_phong::BlinnPhongMaterial,
         render_frame::rendering_system,
         texture::Texture,
         transform::local_to_global_transform_system,
@@ -195,7 +192,13 @@ impl Reactor {
                     ..Default::default()
                 });
 
-                match Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default()).await
+                match Backend::new(
+                    Arc::new(instance),
+                    &config,
+                    None,
+                    BackendType::WebGpu.limits(),
+                )
+                .await
                 {
                     Ok(shared_backend) => (BackendType::WebGpu, Some(shared_backend)),
                     Err(error) => {
@@ -213,10 +216,16 @@ impl Reactor {
                     backends: backend_type.as_wgpu(),
                     ..Default::default()
                 });
-                let shared_backend =
-                    Backend::new(Arc::new(instance), &config, None, wgpu::Limits::default())
-                        .await?;
-                (backend_type, Some(shared_backend))
+                let shared_backend = if backend_type.uses_shared_backend() {
+                    Some(
+                        Backend::new(Arc::new(instance), &config, None, backend_type.limits())
+                            .await?,
+                    )
+                }
+                else {
+                    None
+                };
+                (backend_type, shared_backend)
             }
         };
 
@@ -270,13 +279,13 @@ impl Reactor {
 
             let surface = instance.create_surface(window_handle)?;
 
-            let mut required_limits = wgpu::Limits::downlevel_webgl2_defaults();
-            // for the deferred shader
-            required_limits.max_color_attachment_bytes_per_sample =
-                GeometryBuffer::NUM_TEXTURES as u32 * 16;
-
-            let backend =
-                Backend::new(instance, &self.config, Some(&surface), required_limits).await?;
+            let backend = Backend::new(
+                instance,
+                &self.config,
+                Some(&surface),
+                self.backend_type.limits(),
+            )
+            .await?;
 
             (surface, backend)
         };
