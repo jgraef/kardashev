@@ -17,6 +17,7 @@ use palette::{
     Srgb,
     Srgba,
 };
+use smallvec::SmallVec;
 
 use crate::{
     graphics::{
@@ -300,11 +301,17 @@ impl<T: Pod> InstanceBuffer<T> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct MaterialBindGroupLayoutBuilder {
+pub struct MaterialBindGroupLayoutBuilder<'label> {
+    label: Option<&'label str>,
     entries: Vec<wgpu::BindGroupLayoutEntry>,
 }
 
-impl MaterialBindGroupLayoutBuilder {
+impl<'label> MaterialBindGroupLayoutBuilder<'label> {
+    pub fn set_label(&mut self, label: &'label str) -> &mut Self {
+        self.label = Some(label);
+        self
+    }
+
     pub fn push_view(&mut self) -> &mut Self {
         self.entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.entries.len() as u32,
@@ -342,11 +349,11 @@ impl MaterialBindGroupLayoutBuilder {
         self
     }
 
-    pub fn build(&self, backend: &Backend, label: Option<&str>) -> wgpu::BindGroupLayout {
+    pub fn build(&self, backend: &Backend) -> wgpu::BindGroupLayout {
         backend
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label,
+                label: self.label,
                 entries: &self.entries,
             })
     }
@@ -516,20 +523,22 @@ impl<'label, 'texture, const COLOR_ATTACHMENTS: usize>
 
     pub fn with_color_attachment(
         &mut self,
-        texture: &'texture wgpu::TextureView,
-        clear_color: Option<Srgba<f32>>,
+        color_attachment: ColorAttachment<'texture>,
     ) -> &mut Self {
         self.color_attachments
-            .push(Some(wgpu::RenderPassColorAttachment {
-                view: texture,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: clear_color
-                        .map(|clear_color| wgpu::LoadOp::Clear(clear_color.into_format().as_wgpu()))
-                        .unwrap_or(wgpu::LoadOp::Load),
-                    store: wgpu::StoreOp::Store,
-                },
-            }));
+            .push(Some(color_attachment.as_wgpu()));
+        self
+    }
+
+    pub fn with_color_attachments(
+        &mut self,
+        color_attachments: impl IntoIterator<Item = ColorAttachment<'texture>>,
+    ) -> &mut Self {
+        self.color_attachments.extend(
+            color_attachments
+                .into_iter()
+                .map(|color_attachment| Some(color_attachment.as_wgpu())),
+        );
         self
     }
 
@@ -552,15 +561,181 @@ impl<'label, 'texture, const COLOR_ATTACHMENTS: usize>
     }
 
     pub fn begin<'encoder>(
-        self,
+        &self,
         encoder: &'encoder mut wgpu::CommandEncoder,
     ) -> wgpu::RenderPass<'encoder> {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: self.label,
             color_attachments: &self.color_attachments,
-            depth_stencil_attachment: self.depth_stencil_attachment,
+            depth_stencil_attachment: self.depth_stencil_attachment.clone(),
             occlusion_query_set: None,
             timestamp_writes: None,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct ColorAttachment<'texture> {
+    pub texture: &'texture wgpu::TextureView,
+    pub clear_color: Option<Srgba<f32>>,
+}
+
+impl<'texture> ColorAttachment<'texture> {
+    fn as_wgpu(&self) -> wgpu::RenderPassColorAttachment<'texture> {
+        wgpu::RenderPassColorAttachment {
+            view: self.texture,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: self
+                    .clear_color
+                    .map(|clear_color| wgpu::LoadOp::Clear(clear_color.into_format().as_wgpu()))
+                    .unwrap_or(wgpu::LoadOp::Load),
+                store: wgpu::StoreOp::Store,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PipelineBuilder<'a> {
+    label: Option<&'a str>,
+    bind_group_layouts: SmallVec<[&'a wgpu::BindGroupLayout; 4]>,
+    vertex_buffer_layouts: SmallVec<[wgpu::VertexBufferLayout<'a>; 4]>,
+    fragment_targets: SmallVec<[Option<wgpu::ColorTargetState>; 4]>,
+    depth_texture_format: Option<wgpu::TextureFormat>,
+    shader: &'a str,
+}
+
+impl<'a> PipelineBuilder<'a> {
+    pub fn new(shader: &'a str) -> Self {
+        Self {
+            label: None,
+            bind_group_layouts: SmallVec::new(),
+            vertex_buffer_layouts: SmallVec::new(),
+            fragment_targets: SmallVec::new(),
+            depth_texture_format: None,
+            shader,
+        }
+    }
+    pub fn with_label(&mut self, label: &'a str) -> &mut Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn with_bind_group_layout(
+        &mut self,
+        bind_group_layout: &'a wgpu::BindGroupLayout,
+    ) -> &mut Self {
+        self.bind_group_layouts.push(bind_group_layout);
+        self
+    }
+
+    pub fn with_bind_group_layouts(
+        &mut self,
+        bind_group_layouts: impl IntoIterator<Item = &'a wgpu::BindGroupLayout>,
+    ) -> &mut Self {
+        self.bind_group_layouts.extend(bind_group_layouts);
+        self
+    }
+
+    pub fn with_vertex_buffer_layout(
+        &mut self,
+        vertex_buffer_layout: wgpu::VertexBufferLayout<'a>,
+    ) -> &mut Self {
+        self.vertex_buffer_layouts.push(vertex_buffer_layout);
+        self
+    }
+
+    pub fn with_vertex_buffer_layouts(
+        &mut self,
+        vertex_buffer_layouts: impl IntoIterator<Item = wgpu::VertexBufferLayout<'a>>,
+    ) -> &mut Self {
+        self.vertex_buffer_layouts.extend(vertex_buffer_layouts);
+        self
+    }
+
+    pub fn with_fragment_target(&mut self, fragment_target: wgpu::ColorTargetState) -> &mut Self {
+        self.fragment_targets.push(Some(fragment_target));
+        self
+    }
+
+    pub fn with_fragment_targets(
+        &mut self,
+        fragment_targets: impl IntoIterator<Item = wgpu::ColorTargetState>,
+    ) -> &mut Self {
+        self.fragment_targets
+            .extend(fragment_targets.into_iter().map(Some));
+        self
+    }
+
+    pub fn with_depth_texture_format(
+        &mut self,
+        depth_texture_format: wgpu::TextureFormat,
+    ) -> &mut Self {
+        self.depth_texture_format = Some(depth_texture_format);
+        self
+    }
+
+    pub fn build(&self, backend: &Backend) -> wgpu::RenderPipeline {
+        let shader = backend
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: self.label,
+                source: wgpu::ShaderSource::Wgsl(self.shader.into()),
+            });
+
+        let layout = backend
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: self.label,
+                bind_group_layouts: &self.bind_group_layouts,
+                push_constant_ranges: &[],
+            });
+
+        let pipeline = backend
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: self.label,
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &self.vertex_buffer_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &self.fragment_targets,
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: self.depth_texture_format.map(|depth_texture_format| {
+                    wgpu::DepthStencilState {
+                        format: depth_texture_format,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        pipeline
     }
 }

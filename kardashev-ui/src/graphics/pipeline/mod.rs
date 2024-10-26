@@ -1,4 +1,4 @@
-//pub mod deferred;
+pub mod deferred;
 pub mod draw_world;
 pub mod forward;
 pub mod globals;

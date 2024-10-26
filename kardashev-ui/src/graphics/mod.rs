@@ -47,7 +47,10 @@ use crate::{
         },
         material::Material,
         mesh::Mesh,
-        pipeline::forward::blinn_phong::BlinnPhongMaterial,
+        pipeline::{
+            deferred::gbuffer::GeometryBuffer,
+            forward::blinn_phong::BlinnPhongMaterial,
+        },
         render_frame::rendering_system,
         texture::Texture,
         transform::local_to_global_transform_system,
@@ -267,13 +270,13 @@ impl Reactor {
 
             let surface = instance.create_surface(window_handle)?;
 
-            let backend = Backend::new(
-                instance,
-                &self.config,
-                Some(&surface),
-                wgpu::Limits::downlevel_webgl2_defaults(),
-            )
-            .await?;
+            let mut required_limits = wgpu::Limits::downlevel_webgl2_defaults();
+            // for the deferred shader
+            required_limits.max_color_attachment_bytes_per_sample =
+                GeometryBuffer::NUM_TEXTURES as u32 * 16;
+
+            let backend =
+                Backend::new(instance, &self.config, Some(&surface), required_limits).await?;
 
             (surface, backend)
         };

@@ -10,6 +10,7 @@ use crate::graphics::{
         TextureOutput,
     },
     utils::{
+        ColorAttachment,
         RenderPassBuilder,
         TextureBuffer,
     },
@@ -187,7 +188,10 @@ where
 
         let mut render_pass_builder = RenderPassBuilder::<1>::default();
         render_pass_builder.with_label("hdr tonemapping render pass");
-        render_pass_builder.with_color_attachment(output.view, None);
+        render_pass_builder.with_color_attachment(ColorAttachment {
+            texture: output.view,
+            clear_color: None,
+        });
         let mut render_pass = render_pass_builder.begin(context.encoder);
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.staging_texture.bind_group, &[]);
@@ -239,31 +243,6 @@ impl StagingTexture {
             );
         }
     }
-}
-
-fn create_staging_texture(
-    backend: &Backend,
-    size: SurfaceSize,
-    format: wgpu::TextureFormat,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("hdr staging texture"),
-        size: wgpu::Extent3d {
-            width: size.width,
-            height: size.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-
-    let view = texture.create_view(&Default::default());
-
-    (texture, view)
 }
 
 fn create_staging_bind_group(

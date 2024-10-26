@@ -36,8 +36,8 @@ struct VertexOutput {
 }
 
 struct FragmentOutput {
-    @location(0) position: vec3f,
-    @location(1) normal: vec3f,
+    @location(0) position: vec4f,
+    @location(1) normal: vec4f,
     @location(2) diffuse_specular: vec4f,
 }
 
@@ -113,8 +113,8 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     let diffuse = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords).xyz * in.material_diffuse_color;
     let specular = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords).w;
 
-    out.position = in.position;
-    out.normal = normalize(in.normal);
+    out.position = vec4f(in.position, 0.0);
+    out.normal = vec4f(normalize(in.normal), 0.0);
     out.diffuse_specular = vec4f(
         diffuse,
         specular,

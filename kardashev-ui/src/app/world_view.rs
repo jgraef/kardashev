@@ -44,6 +44,10 @@ use crate::{
             RenderTarget,
         },
         pipeline::{
+            deferred::{
+                CreateDeferredPipeline,
+                DeferredPipeline,
+            },
             forward::blinn_phong::{
                 BlinnPhongRenderPipeline,
                 CreateBlinnPhongRenderPipeline,
@@ -91,7 +95,7 @@ struct Style;
 pub fn WorldView() -> impl IntoView {
     let camera_entity = store_value(None);
     let (tx_mouse, rx_mouse) = mpsc::channel(128);
-    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::BlinnPhong);
+    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::ForwardBlinnPhong);
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
@@ -219,26 +223,27 @@ impl CreatePipeline for CreateWorldViewPipeline {
     ) -> Self::Pipeline {
         WorldViewPipeline {
             switch: self.switch,
-            blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(
+            forward_blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(
                 context,
                 input_config,
                 output_config,
             ),
+            deferred: CreateDeferredPipeline.create_pipeline(context, input_config, output_config),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum WhichPipeline {
-    Pbr,
-    BlinnPhong,
+    ForwardBlinnPhong,
+    Deferred,
 }
 
 impl WhichPipeline {
     pub fn toggle(&mut self) {
         *self = match *self {
-            WhichPipeline::Pbr => WhichPipeline::BlinnPhong,
-            WhichPipeline::BlinnPhong => WhichPipeline::Pbr,
+            WhichPipeline::ForwardBlinnPhong => WhichPipeline::Deferred,
+            WhichPipeline::Deferred => WhichPipeline::ForwardBlinnPhong,
         };
     }
 }
@@ -246,7 +251,8 @@ impl WhichPipeline {
 #[derive(Debug)]
 struct WorldViewPipeline {
     switch: watch::Receiver<WhichPipeline>,
-    blinn_phong: BlinnPhongRenderPipeline,
+    forward_blinn_phong: BlinnPhongRenderPipeline,
+    deferred: DeferredPipeline,
 }
 
 impl RenderPipeline for WorldViewPipeline {
@@ -260,11 +266,11 @@ impl RenderPipeline for WorldViewPipeline {
         output: Self::Output<'_>,
     ) {
         match *self.switch.borrow() {
-            WhichPipeline::Pbr => {
-                todo!();
+            WhichPipeline::Deferred => {
+                self.deferred.render(context, input, output);
             }
-            WhichPipeline::BlinnPhong => {
-                self.blinn_phong.render(context, input, output);
+            WhichPipeline::ForwardBlinnPhong => {
+                self.forward_blinn_phong.render(context, input, output);
             }
         }
     }

@@ -125,6 +125,8 @@ pub trait PipelineMaterial: Send + Sync + Sized + 'static {
         material_bind_group_layout: &wgpu::BindGroupLayout,
         cache: &mut GpuResourceCache,
     ) -> Result<GpuMaterial<Self>, MaterialError>;
+
+    fn create_bind_group_layout(backend: &Backend) -> wgpu::BindGroupLayout;
 }
 
 #[derive(Debug)]

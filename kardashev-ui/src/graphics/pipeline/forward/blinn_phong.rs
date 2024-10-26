@@ -7,7 +7,10 @@ use kardashev_protocol::assets::{
     AssetId,
     Vertex,
 };
-use palette::Srgb;
+use palette::{
+    Srgb,
+    Srgba,
+};
 
 use crate::{
     assets::{
@@ -45,7 +48,9 @@ use crate::{
             Texture,
             TextureError,
         },
+        transform::GlobalTransform,
         utils::{
+            ColorAttachment,
             GpuResourceCache,
             HasVertexBufferLayout,
             MaterialBindGroupLayoutBuilder,
@@ -91,9 +96,8 @@ impl CreatePipeline for CreateBlinnPhongRenderPipeline {
             Some("depth texture"),
         );
 
-        let material_bind_group_layout = MaterialBindGroupLayoutBuilder::default()
-            .push_many_views_and_samplers(7)
-            .build(context.backend, Some("blinn-phong material bind group"));
+        let material_bind_group_layout =
+            BlinnPhongMaterial::create_bind_group_layout(context.backend);
 
         let pipeline_layout =
             context
@@ -196,9 +200,14 @@ impl RenderPipeline for BlinnPhongRenderPipeline {
         let mut render_pass_builder = RenderPassBuilder::<1>::default();
         render_pass_builder.with_label("blinn-phong render pass");
 
+        let color_attachment = ColorAttachment {
+            texture: output.view,
+            clear_color: Some(Srgba::new(0.0, 0.0, 0.0, 1.0)),
+        };
+
         if let Some(globals) = DrawWorldGlobals::from_world(&input) {
             render_pass_builder
-                .with_color_attachment(output.view, globals.clear_color)
+                .with_color_attachment(color_attachment)
                 .with_depth_attachment(&self.depth_texture.texture_view, Some(1.0));
             let mut render_pass = render_pass_builder.begin(context.encoder);
 
@@ -211,18 +220,12 @@ impl RenderPipeline for BlinnPhongRenderPipeline {
                 input.world,
                 input.resources,
                 &self.material_bind_group_layout,
-                |transform, material| {
-                    Instance {
-                        model_transform: transform.as_homogeneous_matrix_array(),
-                        material: MaterialInstanceData::from_material(material),
-                    }
-                },
+                Instance::new,
             );
             self.draw.draw(context.backend, &mut render_pass);
         }
         else {
-            let _render_pass =
-                render_pass_builder.with_color_attachment(output.view, Some(Default::default()));
+            let _render_pass = render_pass_builder.with_color_attachment(color_attachment);
         }
     }
 }
@@ -381,6 +384,13 @@ impl PipelineMaterial for BlinnPhongMaterial {
 
         Ok(GpuMaterial::new(bind_group))
     }
+
+    fn create_bind_group_layout(backend: &Backend) -> wgpu::BindGroupLayout {
+        MaterialBindGroupLayoutBuilder::default()
+            .set_label("blinn-phong material bind group")
+            .push_many_views_and_samplers(7)
+            .build(backend)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Zeroable, Pod)]
@@ -413,6 +423,15 @@ impl MaterialInstanceData {
 pub struct Instance {
     pub model_transform: [f32; 16],
     pub material: MaterialInstanceData,
+}
+
+impl Instance {
+    pub fn new(transform: &GlobalTransform, material: &BlinnPhongMaterial) -> Self {
+        Instance {
+            model_transform: transform.as_homogeneous_matrix_array(),
+            material: MaterialInstanceData::from_material(material),
+        }
+    }
 }
 
 impl HasVertexBufferLayout for Instance {

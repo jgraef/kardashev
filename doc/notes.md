@@ -6,7 +6,7 @@
  - generating texture atlas: `guillotiere = "0.6.2"`
  - [Star catalogs](https://projectrho.com/public_html/starmaps/catalogues.php)
  - [Proper star names](https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt)
- - WebGPU:
+ - WebGPU, OpenGL, etc.:
   - https://webgpufundamentals.org/webgpu/lessons/webgpu-wgsl.html
   - https://sotrh.github.io/learn-wgpu/
   - [Coordinate systems](https://www.w3.org/TR/webgpu/#coordinate-systems)
@@ -14,5 +14,6 @@
   - [baryon pbr render pass](https://github.com/kvark/baryon/blob/main/src/pass/real.rs#L79)
   - [impostors](https://paroj.github.io/gltut/Illumination/Tutorial%2013.html)
   - [SIGGRAPH 2010 Course: Physically-Based Shading Models in Film and Game Production](https://renderwonk.com/publications/s2010-shading-course/)
+  - [Deferred Shading](https://learnopengl.com/Advanced-Lighting/Deferred-Shading) (also has many other good topics)
  - Barnes-Hut algorithm for n-body systems?
  - neat textures: https://www.sharetextures.com/textures
