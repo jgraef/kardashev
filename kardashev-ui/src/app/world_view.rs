@@ -37,34 +37,32 @@ use crate::{
         Label,
     },
     graphics::{
-        blinn_phong::{
-            BlinnPhongRenderPipeline,
-            CreateBlinnPhongRenderPipeline,
-        },
         camera::{
             CameraProjection,
             ClearColor,
             DontRender,
             RenderTarget,
         },
-        hdr::{
-            CreateToneMapPass,
-            ToneMap,
-        },
-        pbr::{
-            CreatePbrRenderPipeline,
-            PbrRenderPipeline,
-        },
-        render_3d::{
-            CreateRender3dPass,
-            CreateRender3dPipeline,
-            CreateRender3dPipelineContext,
-            Render3dPipeline,
-            Render3dPipelineContext,
+        pipeline::{
+            forward::blinn_phong::{
+                BlinnPhongRenderPipeline,
+                CreateBlinnPhongRenderPipeline,
+            },
+            hdr::{
+                CreateHdrPipeline,
+                ToneMap,
+            },
+            CreatePipeline,
+            CreatePipelineContext,
+            RenderPipeline,
+            RenderPipelineContext,
+            RenderWorldInput,
+            TextureConfig,
+            TextureOutput,
         },
         render_frame::{
-            AttachedRenderPass,
-            CreateRenderPass,
+            CreateRenderView,
+            DynRenderView,
         },
         transform::{
             Parent,
@@ -102,17 +100,15 @@ pub fn WorldView() -> impl IntoView {
         let aspect = (surface_size.width as f32) / (surface_size.height as f32);
 
         let render_target = RenderTarget::from_surface(surface);
-        let render_pass = AttachedRenderPass::new(
-            CreateToneMapPass {
-                inner: CreateRender3dPass {
-                    create_pipeline: CreateWorldViewPipeline {
-                        switch: rx_pipeline_switch,
-                    },
+        let render_view = DynRenderView::new(
+            CreateHdrPipeline {
+                inner: CreateWorldViewPipeline {
+                    switch: rx_pipeline_switch,
                 },
                 format: wgpu::TextureFormat::Rgba16Float,
                 tone_map: ToneMap::Aces,
             }
-            .create_render_pass_from_surface(&surface),
+            .create_render_view_from_surface(surface),
         );
 
         let world = expect_context::<WorldServer>();
@@ -134,7 +130,7 @@ pub fn WorldView() -> impl IntoView {
                     switch_pipeline: tx_pipeline_switch,
                 },
                 render_target,
-                render_pass,
+                render_view,
             ));
 
             let _light = system_context.world.spawn((
@@ -210,14 +206,24 @@ struct CreateWorldViewPipeline {
     switch: watch::Receiver<WhichPipeline>,
 }
 
-impl CreateRender3dPipeline for CreateWorldViewPipeline {
+impl CreatePipeline for CreateWorldViewPipeline {
     type Pipeline = WorldViewPipeline;
+    type InputConfig = ();
+    type OutputConfig = TextureConfig;
 
-    fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> WorldViewPipeline {
+    fn create_pipeline(
+        self,
+        context: &CreatePipelineContext,
+        input_config: &mut Self::InputConfig,
+        output_config: &mut Self::OutputConfig,
+    ) -> Self::Pipeline {
         WorldViewPipeline {
             switch: self.switch,
-            pbr: CreatePbrRenderPipeline.create_pipeline(context),
-            blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(context),
+            blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(
+                context,
+                input_config,
+                output_config,
+            ),
         }
     }
 }
@@ -240,18 +246,25 @@ impl WhichPipeline {
 #[derive(Debug)]
 struct WorldViewPipeline {
     switch: watch::Receiver<WhichPipeline>,
-    pbr: PbrRenderPipeline,
     blinn_phong: BlinnPhongRenderPipeline,
 }
 
-impl Render3dPipeline for WorldViewPipeline {
-    fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
+impl RenderPipeline for WorldViewPipeline {
+    type Input<'a> = RenderWorldInput<'a>;
+    type Output<'a> = TextureOutput<'a>;
+
+    fn render(
+        &mut self,
+        context: &mut RenderPipelineContext,
+        input: Self::Input<'_>,
+        output: Self::Output<'_>,
+    ) {
         match *self.switch.borrow() {
             WhichPipeline::Pbr => {
-                self.pbr.render(pipeline_context);
+                todo!();
             }
             WhichPipeline::BlinnPhong => {
-                self.blinn_phong.render(pipeline_context);
+                self.blinn_phong.render(context, input, output);
             }
         }
     }

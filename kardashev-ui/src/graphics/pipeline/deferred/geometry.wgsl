@@ -1,43 +1,44 @@
-#import shared.wgsl::{Globals, MAX_SPOT_LIGHTS};
+#import ../globals.wgsl::{Globals, MAX_SPOT_LIGHTS};
 
 struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
-    @location(2) normal: vec3<f32>,
-    @location(3) tangent: vec3<f32>,
-    @location(4) bitangent: vec3<f32>,
+    @location(0) position: vec3f,
+    @location(1) tex_coords: vec2f,
+    @location(2) normal: vec3f,
+    @location(3) tangent: vec3f,
+    @location(4) bitangent: vec3f,
 }
 
 struct InstanceInput {
-    @location(5) model_transform_a: vec4<f32>,
-    @location(6) model_transform_b: vec4<f32>,
-    @location(7) model_transform_c: vec4<f32>,
-    @location(8) model_transform_d: vec4<f32>,
-    @location(9) material_ambient_color: vec3<f32>,
-    @location(10) material_diffuse_color: vec3<f32>,
-    @location(11) material_specular_color: vec3<f32>,
-    @location(12) material_emissive_color: vec3<f32>,
+    @location(5) model_transform_a: vec4f,
+    @location(6) model_transform_b: vec4f,
+    @location(7) model_transform_c: vec4f,
+    @location(8) model_transform_d: vec4f,
+    @location(9) material_ambient_color: vec3f,
+    @location(10) material_diffuse_color: vec3f,
+    @location(11) material_specular_color: vec3f,
+    @location(12) material_emissive_color: vec3f,
     @location(13) material_shininess: f32,
     @location(14) material_dissolve: f32,
 }
 
+// todo: are binormals needed?
 struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    // todo: normals?
-    @location(1) material_ambient_color: vec3<f32>,
-    @location(2) material_diffuse_color: vec3<f32>,
-    @location(3) material_specular_color: vec3<f32>,
-    @location(4) material_emissive_color: vec3<f32>,
-    @location(5) material_shininess: f32,
-    @location(6) material_dissolve: f32,
+    @builtin(position) clip_position: vec4f,
+    @location(0) position: vec3f,
+    @location(1) tex_coords: vec2f,
+    @location(2) normal: vec3f,
+    @location(3) material_ambient_color: vec3f,
+    @location(4) material_diffuse_color: vec3f,
+    @location(5) material_specular_color: vec3f,
+    @location(6) material_emissive_color: vec3f,
+    @location(7) material_shininess: f32,
+    @location(8) material_dissolve: f32,
 }
 
 struct FragmentOutput {
-    @location(0) position: vec4<f32>,
-    @location(1) normal: vec4<f32>,
-    @location(2) diffuse: vec3<f32>,
-    @location(3) specular: vec3<f32>,
+    @location(0) position: vec3f,
+    @location(1) normal: vec3f,
+    @location(2) diffuse_specular: vec4f,
 }
 
 @group(0) @binding(0)
@@ -87,10 +88,12 @@ fn vs_main(
 
     var out: VertexOutput;
 
-    let world_position = model_transform * vec4<f32>(vertex.position, 1.0);
+    let world_position = model_transform * vec4f(vertex.position, 1.0);
 
     out.clip_position = globals.view_projection * world_position;
+    out.position = out.clip_position.xyz;
     out.tex_coords = vertex.tex_coords;
+    out.normal = (model_transform * vec4f(vertex.normal, 0.0)).xyz;
         
     out.material_ambient_color = instance.material_ambient_color;
     out.material_diffuse_color = instance.material_diffuse_color;
@@ -106,5 +109,15 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
+
+    let diffuse = textureSample(material_diffuse_texture_view, material_diffuse_sampler, in.tex_coords).xyz * in.material_diffuse_color;
+    let specular = textureSample(material_specular_texture_view, material_specular_sampler, in.tex_coords).w;
+
+    out.position = in.position;
+    out.normal = normalize(in.normal);
+    out.diffuse_specular = vec4f(
+        diffuse,
+        specular,
+    );
     return out;
 }

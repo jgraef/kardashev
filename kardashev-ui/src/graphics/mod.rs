@@ -1,15 +1,11 @@
 pub mod backend;
-pub mod blinn_phong;
 pub mod camera;
-pub mod deferred;
 pub mod draw_batch;
-pub mod hdr;
 pub mod light;
 pub mod material;
 pub mod mesh;
 pub mod model;
-pub mod pbr;
-pub mod render_3d;
+pub mod pipeline;
 pub mod render_frame;
 pub mod texture;
 pub mod transform;
@@ -49,10 +45,9 @@ use crate::{
             Backend,
             BackendType,
         },
-        blinn_phong::BlinnPhongMaterial,
         material::Material,
         mesh::Mesh,
-        pbr::PbrMaterial,
+        pipeline::forward::blinn_phong::BlinnPhongMaterial,
         render_frame::rendering_system,
         texture::Texture,
         transform::local_to_global_transform_system,
@@ -457,8 +452,8 @@ impl Plugin for RenderPlugin {
             asset_type_registry
                 .register::<Texture>()
                 .register::<Mesh>()
-                .register::<Material<BlinnPhongMaterial>>()
-                .register::<Material<PbrMaterial>>();
+                .register::<Material<BlinnPhongMaterial>>();
+            //.register::<Material<PbrMaterial>>();
         }
         else {
             tracing::warn!("resource AssetTypeRegistry is missing. can't register asset types for rendering system");

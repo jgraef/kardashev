@@ -18,7 +18,7 @@ use crate::{
         AssetNotFound,
     },
     graphics::{
-        draw_batch::DrawBatcher,
+        backend::Backend,
         material::{
             get_fallback,
             BindGroupBuilder,
@@ -26,13 +26,20 @@ use crate::{
             MaterialError,
             PipelineMaterial,
         },
-        render_3d::{
-            CreateRender3dPipeline,
-            CreateRender3dPipelineContext,
-            MeshMaterialPair,
-            MeshMaterialPairKey,
-            Render3dPipeline,
-            Render3dPipelineContext,
+        pipeline::{
+            draw_world::{
+                DrawMeshesWithMaterials,
+                DrawMeshesWithMaterialsConfig,
+                DrawWorldGlobals,
+            },
+            globals::GlobalsUniform,
+            CreatePipeline,
+            CreatePipelineContext,
+            RenderPipeline,
+            RenderPipelineContext,
+            RenderWorldInput,
+            TextureConfig,
+            TextureOutput,
         },
         texture::{
             Texture,
@@ -42,21 +49,31 @@ use crate::{
             GpuResourceCache,
             HasVertexBufferLayout,
             MaterialBindGroupLayoutBuilder,
+            RenderPassBuilder,
             Srgb32Ext,
+            TextureBuffer,
+            UniformBuffer,
         },
     },
 };
 
-#[include_wgsl_oil::include_wgsl_oil("blinn_phong.wgsl")]
-mod shader {}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CreateBlinnPhongRenderPipeline;
 
-impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
+impl CreatePipeline for CreateBlinnPhongRenderPipeline {
     type Pipeline = BlinnPhongRenderPipeline;
+    type InputConfig = ();
+    type OutputConfig = TextureConfig;
 
-    fn create_pipeline(self, context: &CreateRender3dPipelineContext) -> Self::Pipeline {
+    fn create_pipeline(
+        self,
+        context: &CreatePipelineContext,
+        _input_config: &mut Self::InputConfig,
+        output_config: &mut Self::OutputConfig,
+    ) -> Self::Pipeline {
+        output_config.add_usages(wgpu::TextureUsages::RENDER_ATTACHMENT);
+
+        // todo: split into vertex/fragment shader parts
         let shader = context
             .backend
             .device
@@ -65,15 +82,18 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                 source: wgpu::ShaderSource::Wgsl(shader::SOURCE.into()),
             });
 
-        let mut material_bind_group_layout_builder = MaterialBindGroupLayoutBuilder::default();
-        for _ in 0..7 {
-            material_bind_group_layout_builder.push_view_and_sampler();
-        }
+        let globals = UniformBuffer::new(context.backend);
 
-        let material_bind_group_layout = material_bind_group_layout_builder.build(
-            &context.backend.device,
-            Some("blinn-phong material bind group"),
+        let depth_texture = TextureBuffer::new(
+            context.backend,
+            output_config.size,
+            wgpu::TextureFormat::Depth32Float,
+            Some("depth texture"),
         );
+
+        let material_bind_group_layout = MaterialBindGroupLayoutBuilder::default()
+            .push_many_views_and_samplers(7)
+            .build(context.backend, Some("blinn-phong material bind group"));
 
         let pipeline_layout =
             context
@@ -81,11 +101,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("blinn-phong pipeline layout"),
-                    bind_group_layouts: &[
-                        &material_bind_group_layout,
-                        &context.camera_bind_group_layout,
-                        &context.light_bind_group_layout,
-                    ],
+                    bind_group_layouts: &[&globals.bind_group_layout, &material_bind_group_layout],
                     push_constant_ranges: &[],
                 });
 
@@ -106,7 +122,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                         module: &shader,
                         entry_point: "fs_main",
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: context.surface_format,
+                            format: output_config.format,
                             blend: Some(wgpu::BlendState::REPLACE),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
@@ -122,7 +138,7 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
-                        format: context.depth_texture_format,
+                        format: depth_texture.format,
                         depth_write_enabled: true,
                         depth_compare: wgpu::CompareFunction::Less,
                         stencil: wgpu::StencilState::default(),
@@ -137,37 +153,77 @@ impl CreateRender3dPipeline for CreateBlinnPhongRenderPipeline {
                     cache: None,
                 });
 
+        let draw = DrawMeshesWithMaterials::new(
+            context.backend,
+            DrawMeshesWithMaterialsConfig {
+                instance_buffer_slot: 1,
+                vertex_buffer_slot: 0,
+                material_bind_group_index: 1,
+            },
+        );
+
         BlinnPhongRenderPipeline {
-            pipeline,
+            globals,
+            depth_texture,
             material_bind_group_layout,
-            draw_batcher: DrawBatcher::new(context.backend),
+            pipeline,
+            draw,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct BlinnPhongRenderPipeline {
-    pipeline: wgpu::RenderPipeline,
+    globals: UniformBuffer<GlobalsUniform>,
+    depth_texture: TextureBuffer,
     material_bind_group_layout: wgpu::BindGroupLayout,
-    draw_batcher: DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<BlinnPhongMaterial>, Instance>,
+    pipeline: wgpu::RenderPipeline,
+    draw: DrawMeshesWithMaterials<BlinnPhongMaterial, Instance>,
 }
 
-impl Render3dPipeline for BlinnPhongRenderPipeline {
-    fn render(&mut self, pipeline_context: &mut Render3dPipelineContext) {
-        pipeline_context.render_pass.set_pipeline(&self.pipeline);
-        pipeline_context.bind_camera_uniform(1);
-        pipeline_context.bind_light_uniform(2);
-        pipeline_context.batch_meshes_with_material::<BlinnPhongMaterial, Instance>(
-            &mut self.draw_batcher,
-            &self.material_bind_group_layout,
-            |transform, material| {
-                Instance {
-                    model_transform: transform.as_homogeneous_matrix_array(),
-                    material: MaterialInstanceData::from_material(material),
-                }
-            },
-        );
-        pipeline_context.draw_batched_meshes_with_materials(&mut self.draw_batcher, 1, 0, 0);
+impl RenderPipeline for BlinnPhongRenderPipeline {
+    type Input<'a> = RenderWorldInput<'a>;
+    type Output<'a> = TextureOutput<'a>;
+
+    fn render(
+        &mut self,
+        context: &mut RenderPipelineContext,
+        input: Self::Input<'_>,
+        output: Self::Output<'_>,
+    ) {
+        self.depth_texture.resize(context.backend, output.size);
+
+        let mut render_pass_builder = RenderPassBuilder::<1>::default();
+        render_pass_builder.with_label("blinn-phong render pass");
+
+        if let Some(globals) = DrawWorldGlobals::from_world(&input) {
+            render_pass_builder
+                .with_color_attachment(output.view, globals.clear_color)
+                .with_depth_attachment(&self.depth_texture.texture_view, Some(1.0));
+            let mut render_pass = render_pass_builder.begin(context.encoder);
+
+            render_pass.set_pipeline(&self.pipeline);
+            self.globals.write(context.backend, &globals.globals);
+            render_pass.set_bind_group(0, &self.globals.bind_group, &[]);
+
+            self.draw.batch(
+                context.backend,
+                input.world,
+                input.resources,
+                &self.material_bind_group_layout,
+                |transform, material| {
+                    Instance {
+                        model_transform: transform.as_homogeneous_matrix_array(),
+                        material: MaterialInstanceData::from_material(material),
+                    }
+                },
+            );
+            self.draw.draw(context.backend, &mut render_pass);
+        }
+        else {
+            let _render_pass =
+                render_pass_builder.with_color_attachment(output.view, Some(Default::default()));
+        }
     }
 }
 
@@ -246,7 +302,7 @@ impl PipelineMaterial for BlinnPhongMaterial {
     fn load_to_gpu(
         &mut self,
         label: Option<&str>,
-        backend: &super::backend::Backend,
+        backend: &Backend,
         material_bind_group_layout: &wgpu::BindGroupLayout,
         cache: &mut GpuResourceCache,
     ) -> Result<GpuMaterial<Self>, MaterialError> {
@@ -426,3 +482,6 @@ impl HasVertexBufferLayout for Instance {
         }
     }
 }
+
+#[include_wgsl_oil::include_wgsl_oil("blinn_phong.wgsl")]
+mod shader {}

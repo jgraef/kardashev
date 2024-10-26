@@ -1,46 +1,29 @@
-use std::time::Instant;
-
-use arrayvec::ArrayVec;
-use bytemuck::{
-    Pod,
-    Zeroable,
-};
 use kardashev_protocol::assets::Vertex;
-use nalgebra::Point3;
 
 use crate::graphics::{
     backend::Backend,
-    blinn_phong::{
-        BlinnPhongMaterial,
-        Instance,
-    },
     camera::{
         CameraProjection,
         ClearColor,
     },
     draw_batch::DrawBatcher,
-    light::{
-        AmbientLight,
-        PointLight,
-    },
-    render_3d::{
-        CameraUniform,
-        LightsUniform,
-        MeshMaterialPair,
-        MeshMaterialPairKey,
-        PointLightUniform,
-    },
-    render_frame::{
-        CreateRenderPass,
-        CreateRenderPassContext,
-        RenderPass,
-        RenderPassContext,
+    light::PointLight,
+    pipeline::{
+        draw_world::{
+            MeshMaterialPair,
+            MeshMaterialPairKey,
+        },
+        forward::blinn_phong::{
+            BlinnPhongMaterial,
+            Instance,
+            MaterialInstanceData,
+        },
+        globals::GlobalsUniform,
     },
     transform::GlobalTransform,
     utils::{
         HasVertexBufferLayout,
         MaterialBindGroupLayoutBuilder,
-        Srgb32Ext,
         Srgba64Ext,
         TextureBuffer,
         UniformBuffer,
@@ -48,7 +31,7 @@ use crate::graphics::{
     SurfaceSize,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct CreateDeferredRenderPass;
 
 impl CreateRenderPass for CreateDeferredRenderPass {
@@ -172,7 +155,7 @@ impl CreateRenderPass for CreateDeferredRenderPass {
                     vertex: wgpu::VertexState {
                         module: &lighting_shader,
                         entry_point: "vs_main",
-                        buffers: &[Vertex::layout(), Instance::layout()],
+                        buffers: &[],
                         compilation_options: Default::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
@@ -210,6 +193,7 @@ impl CreateRenderPass for CreateDeferredRenderPass {
             globals,
             geometry_pipeline,
             lighting_pipeline,
+            material_bind_group_layout,
             draw_batcher: DrawBatcher::new(&context.backend),
         }
     }
@@ -222,11 +206,12 @@ pub struct DeferredRenderPass {
     globals: UniformBuffer<GlobalsUniform>,
     geometry_pipeline: wgpu::RenderPipeline,
     lighting_pipeline: wgpu::RenderPipeline,
+    material_bind_group_layout: wgpu::BindGroupLayout,
     draw_batcher: DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<BlinnPhongMaterial>, Instance>,
 }
 
 impl RenderPass for DeferredRenderPass {
-    fn render(&mut self, context: &mut RenderPassContext) {
+    fn render(&mut self, context: &mut RenderViewContext) {
         self.depth_texture
             .resize(context.backend, context.target_size);
         self.g_buffer.resize(context.backend, context.target_size);
@@ -239,74 +224,101 @@ impl RenderPass for DeferredRenderPass {
             .expect("render target entity doesn't exist");
 
         if let Some((clear_color, camera_transform, camera_projection)) = query_camera.get() {
-            let mut render_pass = context
-                .encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render3d render pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: context.target_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: clear_color
-                                .map(|c| wgpu::LoadOp::Clear(c.clear_color.into_format().as_wgpu()))
-                                .unwrap_or(wgpu::LoadOp::Load),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_texture.texture_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+            let mut globals = GlobalsUniform::default();
 
-            let mut globals = GlobalsUniform {
-                view_projection: (camera_projection.projection_matrix.as_matrix()
-                    * camera_transform.model_matrix.inverse().to_homogeneous())
-                .as_slice()
-                .try_into()
-                .unwrap(),
-                view_position: camera_transform
-                    .model_matrix
-                    .isometry
-                    .translation
-                    .vector
-                    .as_slice()
-                    .try_into()
-                    .unwrap(),
-                aspect: camera_projection.projection_matrix.aspect(),
-                ambient_light: context
-                    .resources
-                    .get::<AmbientLight>()
-                    .map(|ambient_light| ambient_light.color.as_array3())
-                    .unwrap_or_default(),
-                num_point_lights: 0,
-                point_lights: Default::default(),
-            };
+            // set camera
+            globals.set_camera(camera_projection, camera_transform);
 
             // query lights
             let mut query_lights = context.world.query::<(&GlobalTransform, &PointLight)>();
-            let mut num_lights = 0;
             for (_, (transform, point_light)) in query_lights.iter() {
-                if num_lights >= MAX_POINT_LIGHTS {
+                if !globals.add_point_light(transform.position(), point_light.color) {
                     break;
                 }
-                globals.point_lights[num_lights] = PointLightUniform::new(
-                    transform.model_matrix.transform_point(&Point3::origin()),
-                    point_light.color,
-                );
-                num_lights += 1;
             }
-            globals.num_point_lights = num_lights.try_into().unwrap();
 
             self.globals.write(context.backend, &globals);
 
-            render_pass.set_pipeline(&self.geometry_pipeline);
+            // geometry render pass
+            {
+                let mut geometry_render_pass =
+                    context
+                        .encoder
+                        .begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("geometry render pass"),
+                            color_attachments: &self.g_buffer.color_attachments(),
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_texture.texture_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
+
+                geometry_render_pass.set_pipeline(&self.geometry_pipeline);
+                geometry_render_pass.set_bind_group(0, &self.globals.bind_group, &[]);
+
+                batch_meshes_with_material(
+                    context.world,
+                    context.resources,
+                    context.backend,
+                    &mut self.draw_batcher,
+                    &self.material_bind_group_layout,
+                    |transform, material| {
+                        Instance {
+                            model_transform: transform.as_homogeneous_matrix_array(),
+                            material: MaterialInstanceData::from_material(material),
+                        }
+                    },
+                );
+
+                draw_batched_meshes_with_materials(
+                    &mut geometry_render_pass,
+                    context.backend,
+                    &mut self.draw_batcher,
+                    1,
+                    0,
+                    1,
+                );
+            }
+
+            // lighting render pass
+            {
+                let mut lighting_render_pass =
+                    context
+                        .encoder
+                        .begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("lighting render pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: context.target_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: clear_color
+                                        .map(|c| {
+                                            wgpu::LoadOp::Clear(
+                                                c.clear_color.into_format().as_wgpu(),
+                                            )
+                                        })
+                                        .unwrap_or(wgpu::LoadOp::Load),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
+
+                lighting_render_pass.set_pipeline(&self.lighting_pipeline);
+                lighting_render_pass.set_bind_group(0, &self.globals.bind_group, &[]);
+                lighting_render_pass.set_bind_group(1, &self.g_buffer.bind_group, &[]);
+                lighting_render_pass.draw(0..3, 0..1);
+            }
         }
         else {
             tracing::warn!("entity with RenderTarget component is missing other camera components");
@@ -314,22 +326,8 @@ impl RenderPass for DeferredRenderPass {
     }
 }
 
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-#[repr(C)]
-pub struct GlobalsUniform {
-    pub view_projection: [f32; 16],
-    pub view_position: [f32; 3],
-    pub aspect: f32,
-
-    pub ambient_light: [f32; 3],
-    pub num_point_lights: u32,
-    pub point_lights: [PointLightUniform; MAX_POINT_LIGHTS],
-}
-
-pub const MAX_POINT_LIGHTS: usize = 16;
-
 #[derive(Debug)]
-pub struct GBuffer {
+struct GBuffer {
     pub size: SurfaceSize,
     pub position: TextureBuffer,
     pub normal: TextureBuffer,
@@ -474,6 +472,35 @@ impl GBuffer {
                 format: self.diffuse_specular.format,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
+            }),
+        ]
+    }
+
+    pub fn color_attachments(&self) -> [Option<wgpu::RenderPassColorAttachment>; 3] {
+        [
+            Some(wgpu::RenderPassColorAttachment {
+                view: &self.position.texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &self.normal.texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &self.diffuse_specular.texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
             }),
         ]
     }

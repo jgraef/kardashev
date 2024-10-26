@@ -1,11 +1,7 @@
-#import camera.wgsl::Camera;
-#import light.wgsl::Lights;
+#import ../globals.wgsl::{Globals, PointLight};
 
-@group(1) @binding(0)
-var<uniform> camera: Camera;
-
-@group(2) @binding(0)
-var<uniform> light: Lights;
+@group(0) @binding(0)
+var<uniform> globals: Globals;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -46,33 +42,33 @@ struct FragmentOutput {
     @location(0) color: vec4<f32>,
 }
 
-@group(0) @binding(0)
+@group(1) @binding(0)
 var material_ambient_texture_view: texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(1)
 var material_ambient_sampler: sampler;
-@group(0) @binding(2)
+@group(1) @binding(2)
 var material_diffuse_texture_view: texture_2d<f32>;
-@group(0) @binding(3)
+@group(1) @binding(3)
 var material_diffuse_sampler: sampler;
-@group(0) @binding(4)
+@group(1) @binding(4)
 var material_specular_texture_view: texture_2d<f32>;
-@group(0) @binding(5)
+@group(1) @binding(5)
 var material_specular_sampler: sampler;
-@group(0) @binding(6)
+@group(1) @binding(6)
 var material_normal_texture_view: texture_2d<f32>;
-@group(0) @binding(7)
+@group(1) @binding(7)
 var material_normal_sampler: sampler;
-@group(0) @binding(8)
+@group(1) @binding(8)
 var material_shininess_texture_view: texture_2d<f32>;
-@group(0) @binding(9)
+@group(1) @binding(9)
 var material_shininess_sampler: sampler;
-@group(0) @binding(10)
+@group(1) @binding(10)
 var material_dissolve_texture_view: texture_2d<f32>;
-@group(0) @binding(11)
+@group(1) @binding(11)
 var material_dissolve_sampler: sampler;
-@group(0) @binding(12)
+@group(1) @binding(12)
 var material_emissive_texture_view: texture_2d<f32>;
-@group(0) @binding(13)
+@group(1) @binding(13)
 var material_emissive_sampler: sampler;
 
 
@@ -106,16 +102,16 @@ fn vs_main(
         world_normal,
     ));
 
-    out.clip_position = camera.view_projection * world_position;
+    out.clip_position = globals.view_projection * world_position;
     out.tex_coords = vertex.tex_coords;
         
     out.tangent_position = tangent_matrix * world_position.xyz;
-    out.tangent_view_position = tangent_matrix * camera.view_position.xyz;
+    out.tangent_view_position = tangent_matrix * globals.view_position.xyz;
     // fixme
-    //for (var i: u32 = 0; i < light.num_point_lights; i++) {
-    //    out.tangent_light_position[i] = tangent_matrix * light.point_lights[i].position;
+    //for (var i: u32 = 0; i < globals.num_point_lights; i++) {
+    //    out.tangent_light_position[i] = tangent_matrix * globals.point_lights[i].position;
     //}
-    out.tangent_light_position = tangent_matrix * light.point_lights[0].position.xyz;
+    out.tangent_light_position = tangent_matrix * globals.point_lights[0].position.xyz;
     
     out.material_ambient_color = instance.material_ambient_color;
     out.material_diffuse_color = instance.material_diffuse_color;
@@ -134,11 +130,11 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     let tangent_normal = textureSample(material_normal_texture_view, material_normal_sampler, in.tex_coords).xyz * 2.0 - 1.0;
     //let tangent_normal = vec3f(0.0, 0.0, 1.0);
 
-    //let view_direction = normalize(camera.view_position - in.world_position);
+    //let view_direction = normalize(globals.view_position - in.world_position);
     let view_direction = normalize(in.tangent_view_position - in.tangent_position);
     
     let ambient_texture_color = textureSample(material_ambient_texture_view, material_ambient_sampler, in.tex_coords).xyz;
-    let ambient_color = light.ambient_light * ambient_texture_color * in.material_ambient_color;
+    let ambient_color = globals.ambient_light * ambient_texture_color * in.material_ambient_color;
 
     let emissive_texture_color = textureSample(material_emissive_texture_view, material_emissive_sampler, in.tex_coords).xyz;
     let emissive_color = emissive_texture_color * in.material_emissive_color;
@@ -153,18 +149,18 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     let shininess = texture_shininess * in.material_shininess;
 
     // spot lights
-    for (var i: u32 = 0; i < light.num_point_lights; i++) {
+    for (var i: u32 = 0; i < globals.num_point_lights; i++) {
         let light_direction = normalize(in.tangent_light_position - in.tangent_position);
         
         let reflect_direction = reflect(-light_direction, tangent_normal);
         //let half_direction = normalize(view_direction + light_direction);
         
         let diffuse_strength = max(dot(tangent_normal, light_direction), 0.0);
-        diffuse_color += light.point_lights[i].color * diffuse_strength;
+        diffuse_color += globals.point_lights[i].color * diffuse_strength;
 
         let specular_strength = pow(max(dot(view_direction, reflect_direction), 0.0), shininess);
         //let specular_strength = pow(max(dot(tangent_normal, half_direction), 0.0), shininess);
-        specular_color += light.point_lights[i].color * specular_strength;
+        specular_color += globals.point_lights[i].color * specular_strength;
     }
     diffuse_color *= diffuse_texture_color * in.material_diffuse_color;
     specular_color *= specular_texture_color * in.material_specular_color;

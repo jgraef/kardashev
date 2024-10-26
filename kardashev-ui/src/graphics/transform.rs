@@ -65,6 +65,10 @@ impl GlobalTransform {
             .try_into()
             .expect("convert model matrix to array")
     }
+
+    pub fn position(&self) -> Point3<f32> {
+        self.model_matrix.transform_point(&Point3::origin())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

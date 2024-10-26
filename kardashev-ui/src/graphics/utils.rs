@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use arrayvec::ArrayVec;
 use bytemuck::Pod;
 use kardashev_protocol::assets::{
     AssetId,
@@ -18,23 +19,11 @@ use palette::{
 };
 
 use crate::{
-    ecs::resource::Resources,
     graphics::{
         backend::{
             Backend,
             BackendId,
         },
-        draw_batch::DrawBatcher,
-        material::{
-            Material,
-            PipelineMaterial,
-        },
-        mesh::Mesh,
-        render_3d::{
-            MeshMaterialPair,
-            MeshMaterialPairKey,
-        },
-        transform::GlobalTransform,
         SurfaceSize,
     },
     utils::any_cache::AnyArcCache,
@@ -316,7 +305,7 @@ pub struct MaterialBindGroupLayoutBuilder {
 }
 
 impl MaterialBindGroupLayoutBuilder {
-    pub fn push_view(&mut self) {
+    pub fn push_view(&mut self) -> &mut Self {
         self.entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.entries.len() as u32,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -327,27 +316,39 @@ impl MaterialBindGroupLayoutBuilder {
             },
             count: None,
         });
+        self
     }
 
-    pub fn push_sampler(&mut self) {
+    pub fn push_sampler(&mut self) -> &mut Self {
         self.entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.entries.len() as u32,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
         });
+        self
     }
 
-    pub fn push_view_and_sampler(&mut self) {
+    pub fn push_view_and_sampler(&mut self) -> &mut Self {
         self.push_view();
         self.push_sampler();
+        self
     }
 
-    pub fn build(&self, device: &wgpu::Device, label: Option<&str>) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label,
-            entries: &self.entries,
-        })
+    pub fn push_many_views_and_samplers(&mut self, n: usize) -> &mut Self {
+        for _ in 0..n {
+            self.push_view_and_sampler();
+        }
+        self
+    }
+
+    pub fn build(&self, backend: &Backend, label: Option<&str>) -> wgpu::BindGroupLayout {
+        backend
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label,
+                entries: &self.entries,
+            })
     }
 }
 
@@ -457,7 +458,7 @@ impl TextureBuffer {
         }
     }
 
-    pub fn resize(&mut self, backend: &Backend, size: SurfaceSize) {
+    pub fn resize(&mut self, backend: &Backend, size: SurfaceSize) -> bool {
         if self.size != size {
             tracing::debug!(label = ?self.label, ?size, "resizing texture buffer");
             let (texture, texture_view) =
@@ -465,6 +466,10 @@ impl TextureBuffer {
             self.texture = texture;
             self.texture_view = texture_view;
             self.size = size;
+            true
+        }
+        else {
+            false
         }
     }
 
@@ -493,71 +498,69 @@ impl TextureBuffer {
     }
 }
 
-pub fn batch_meshes_with_material<M: PipelineMaterial, I: Pod>(
-    world: &hecs::World,
-    resources: &mut Resources,
-    backend: &Backend,
-    draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, I>,
-    material_bind_group_layout: &wgpu::BindGroupLayout,
-    make_instance: impl Fn(&GlobalTransform, &M) -> I,
-) {
-    tracing::trace!("batching");
-
-    let mut render_entities = world.query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
-
-    let gpu_resource_cache = resources.get_mut_or_insert_default::<GpuResourceCache>();
-
-    for (_entity, (transform, mesh, material)) in render_entities.iter() {
-        // todo: handle errors
-
-        let instance = make_instance(transform, &material.cpu);
-
-        let Ok(mesh_gpu) = mesh.gpu(backend, gpu_resource_cache)
-        else {
-            continue;
-        };
-
-        let Ok(material_gpu) =
-            material.gpu(backend, gpu_resource_cache, material_bind_group_layout)
-        else {
-            continue;
-        };
-
-        draw_batcher.push(
-            MeshMaterialPairKey {
-                mesh: mesh_gpu.get().id(),
-                material: material_gpu.get().id(),
-            },
-            || {
-                MeshMaterialPair {
-                    mesh: mesh_gpu.clone(),
-                    material: material_gpu.clone(),
-                }
-            },
-            instance,
-        );
-    }
+#[derive(Clone, Debug, Default)]
+pub struct RenderPassBuilder<'label, 'texture, const COLOR_ATTACHMENTS: usize> {
+    label: Option<&'label str>,
+    color_attachments:
+        ArrayVec<Option<wgpu::RenderPassColorAttachment<'texture>>, COLOR_ATTACHMENTS>,
+    depth_stencil_attachment: Option<wgpu::RenderPassDepthStencilAttachment<'texture>>,
 }
 
-pub fn draw_batched_meshes_with_materials<M: PipelineMaterial, I: Pod>(
-    render_pass: &mut wgpu::RenderPass,
-    backend: &Backend,
-    draw_batcher: &mut DrawBatcher<MeshMaterialPairKey, MeshMaterialPair<M>, I>,
-    instance_buffer_slot: u32,
-    vertex_buffer_slot: u32,
-    material_bind_group_index: u32,
-) {
-    if let Some(prepared_batch) = draw_batcher.prepare(backend) {
-        render_pass.set_vertex_buffer(instance_buffer_slot, prepared_batch.instance_buffer);
+impl<'label, 'texture, const COLOR_ATTACHMENTS: usize>
+    RenderPassBuilder<'label, 'texture, COLOR_ATTACHMENTS>
+{
+    pub fn with_label(&mut self, label: &'label str) -> &mut Self {
+        self.label = Some(label);
+        self
+    }
 
-        for batch_item in prepared_batch {
-            let mesh = batch_item.value.mesh.get();
-            let material = batch_item.value.material.get();
+    pub fn with_color_attachment(
+        &mut self,
+        texture: &'texture wgpu::TextureView,
+        clear_color: Option<Srgba<f32>>,
+    ) -> &mut Self {
+        self.color_attachments
+            .push(Some(wgpu::RenderPassColorAttachment {
+                view: texture,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: clear_color
+                        .map(|clear_color| wgpu::LoadOp::Clear(clear_color.into_format().as_wgpu()))
+                        .unwrap_or(wgpu::LoadOp::Load),
+                    store: wgpu::StoreOp::Store,
+                },
+            }));
+        self
+    }
 
-            render_pass.set_vertex_buffer(vertex_buffer_slot, mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_bind_group(material_bind_group_index, &material.bind_group, &[]);
-            render_pass.draw_indexed(0..mesh.num_indices as u32, 0, batch_item.range);
-        }
+    pub fn with_depth_attachment(
+        &mut self,
+        texture: &'texture wgpu::TextureView,
+        clear_value: Option<f32>,
+    ) -> &mut Self {
+        self.depth_stencil_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+            view: texture,
+            depth_ops: Some(wgpu::Operations {
+                load: clear_value
+                    .map(|clear_value| wgpu::LoadOp::Clear(clear_value))
+                    .unwrap_or(wgpu::LoadOp::Load),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        self
+    }
+
+    pub fn begin<'encoder>(
+        self,
+        encoder: &'encoder mut wgpu::CommandEncoder,
+    ) -> wgpu::RenderPass<'encoder> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: self.label,
+            color_attachments: &self.color_attachments,
+            depth_stencil_attachment: self.depth_stencil_attachment,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        })
     }
 }

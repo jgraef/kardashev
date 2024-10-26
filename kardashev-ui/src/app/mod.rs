@@ -3,7 +3,6 @@ mod config;
 mod world_view;
 
 use core::str;
-use std::f32::consts::PI;
 
 use components::window::provide_graphics;
 use kardashev_client::ApiClient;
@@ -18,10 +17,7 @@ use leptos::{
 };
 use leptos_meta::provide_meta_context;
 use leptos_router::Router;
-use nalgebra::{
-    Point3,
-    UnitQuaternion,
-};
+use nalgebra::Point3;
 use palette::Srgb;
 
 use crate::{
@@ -46,7 +42,6 @@ use crate::{
         Label,
     },
     graphics::{
-        blinn_phong::BlinnPhongMaterial,
         light::{
             AmbientLight,
             PointLight,
@@ -58,7 +53,7 @@ use crate::{
             MeshBuilder,
             Meshable,
         },
-        pbr::PbrMaterial,
+        pipeline::forward::blinn_phong::BlinnPhongMaterial,
         transform::Transform,
         RenderPlugin,
     },
@@ -137,7 +132,7 @@ fn create_world(system_context: &mut SystemContext) {
         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
             "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
         )),
-        Load::<Material<PbrMaterial>>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
+        //Load::<Material<PbrMaterial>>::new(asset_id!("4eef57a3-9df8-4fa1-939f-109c3b02f9f0")),
         Label::new_static("star"),
         PointLight::new(SUN_LIGHT_COLOR),
     ));
@@ -148,7 +143,7 @@ fn create_world(system_context: &mut SystemContext) {
         Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
             "d5b74211-70fb-4b4c-9199-c5aa89b90b01" //"cbef3406-54ae-4832-bebf-27c3ac9e130c"
         )),
-        Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
+        //Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
         Label::new_static("earth"),
     ));
 

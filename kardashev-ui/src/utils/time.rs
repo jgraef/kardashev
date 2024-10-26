@@ -68,7 +68,7 @@ pub fn sleep(duration: Duration) -> Sleep {
     Sleep::new(duration)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TicksPerSecond {
     measurement_start: Option<Instant>,
     measurement_duration: Duration,

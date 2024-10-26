@@ -5,12 +5,6 @@ use bytemuck::{
 use palette::Srgba;
 
 use crate::graphics::{
-    render_3d::{
-        CreateRender3dPipeline,
-        CreateRender3dPipelineContext,
-        Render3dPipeline,
-        Render3dPipelineContext,
-    },
     transform::GlobalTransform,
     utils::{
         HasVertexBufferLayout,
