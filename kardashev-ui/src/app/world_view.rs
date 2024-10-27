@@ -2,7 +2,16 @@ use std::f32::consts::PI;
 
 use kardashev_style::style;
 use leptos::{
-    component, create_rw_signal, expect_context, on_cleanup, store_value, view, IntoView, RwSignal, SignalUpdate, SignalWith
+    component,
+    create_rw_signal,
+    expect_context,
+    on_cleanup,
+    store_value,
+    view,
+    IntoView,
+    RwSignal,
+    SignalUpdate,
+    SignalWith,
 };
 use nalgebra::{
     Point3,
@@ -63,7 +72,9 @@ use crate::{
         render_frame::{
             CreateRenderView,
             DynRenderView,
+            RenderFrameInfo,
         },
+        stats::ResourceUsages,
         transform::{
             Parent,
             Transform,
@@ -82,6 +93,7 @@ use crate::{
         },
         InputState,
     },
+    utils::human_size,
 };
 
 #[style(path = "src/app/world_view.scss")]
@@ -200,8 +212,22 @@ pub fn WorldView() -> impl IntoView {
     view! {
         <div class=Style::window>
             <ul class=Style::debug_overlay>
-                <li>"FPS: " {move || debug_info.with(|debug_info| debug_info.fps)}</li>
-                <li>"Pipeline: " {move || debug_info.with(|debug_info| format!("{:?}", debug_info.which))}</li>
+                {move || {
+                    debug_info.with(|debug_info| {
+                        view!{
+                            <li>"FPS: " {format!("{:.2}", debug_info.fps)}</li>
+                            <li>"Frame time: " {format!("{:.3} ms", debug_info.frame_time)}</li>
+                            <li>"Pipeline: " {format!("{:?}", debug_info.which)}</li>
+                            <li>"Resources:"
+                                <ul>
+                                    <li>"Buffers: " {debug_info.resources.buffers} " - " {human_size(debug_info.resources.buffer_memory)}</li>
+                                    <li>"Textures: " {debug_info.resources.textures} " - " {human_size(debug_info.resources.texture_memory)}</li>
+                                </ul>
+                            </li>
+                        }
+                    })
+                }}
+
             </ul>
             <Window on_load on_event />
         </div>
@@ -240,7 +266,9 @@ impl CreatePipeline for CreateWorldViewPipeline {
 enum WhichPipeline {
     #[default]
     ForwardBlinnPhong,
-    Deferred { debug_channel: Option<Channel> },
+    Deferred {
+        debug_channel: Option<Channel>,
+    },
 }
 
 impl WhichPipeline {
@@ -411,8 +439,11 @@ fn world_view_camera_controller_system(system_context: &mut SystemContext) {
                             let mut which = *controller.switch_pipeline.borrow();
                             which.toggle();
                             let _ = controller.switch_pipeline.send(which);
-                            
-                            let debug_info = system_context.resources.get::<RwSignal<DebugInfo>>().unwrap();
+
+                            let debug_info = system_context
+                                .resources
+                                .get::<RwSignal<DebugInfo>>()
+                                .unwrap();
                             debug_info.update(|debug_info| {
                                 debug_info.which = which;
                             });
@@ -433,11 +464,28 @@ impl Plugin for MapPlugin {
         context
             .schedule
             .add_system(world_view_camera_controller_system);
+        context.schedule.add_system(update_debug_info);
     }
 }
 
 #[derive(Debug, Default)]
 struct DebugInfo {
     fps: f32,
+    frame_time: f32,
     which: WhichPipeline,
+    resources: ResourceUsages,
+}
+
+fn update_debug_info(system_context: &mut SystemContext) {
+    if let Some(frame_info) = system_context.resources.get::<RenderFrameInfo>() {
+        let debug_info = system_context
+            .resources
+            .get::<RwSignal<DebugInfo>>()
+            .unwrap();
+        debug_info.update(|debug_info| {
+            debug_info.fps = frame_info.fps().unwrap_or_default();
+            debug_info.frame_time = frame_info.frame_time().as_secs_f32() * 1000.0;
+            debug_info.resources = ResourceUsages::get();
+        });
+    }
 }

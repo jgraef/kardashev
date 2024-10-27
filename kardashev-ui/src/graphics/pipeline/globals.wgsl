@@ -1,4 +1,4 @@
-const MAX_SPOT_LIGHTS: u32 = 16;
+const MAX_POINT_LIGHTS: u32 = 16;
 
 struct Globals {
     view_projection: mat4x4<f32>,
@@ -6,7 +6,7 @@ struct Globals {
     aspect: f32,
     ambient_light: vec3<f32>,
     num_point_lights: u32,
-    point_lights: array<SpotLight, MAX_SPOT_LIGHTS>,
+    point_lights: array<SpotLight, MAX_POINT_LIGHTS>,
 }
 
 struct SpotLight {

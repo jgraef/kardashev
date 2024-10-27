@@ -38,6 +38,8 @@ use crate::{
 };
 
 pub fn rendering_system(system_context: &mut SystemContext) {
+    let start_time = Instant::now();
+
     let mut render_targets = system_context
         .world
         .query::<(&RenderTarget, &mut DynRenderView, Option<&Label>)>()
@@ -73,6 +75,14 @@ pub fn rendering_system(system_context: &mut SystemContext) {
             }
         };
     }
+
+    let end_time = Instant::now();
+
+    let render_frame_info = system_context
+        .resources
+        .get_mut_or_insert_default::<RenderFrameInfo>();
+    render_frame_info.fps.push(end_time);
+    render_frame_info.frame_time = end_time.duration_since(start_time);
 }
 
 fn render_to_texture(
@@ -85,8 +95,6 @@ fn render_to_texture(
     label: Option<&Label>,
 ) {
     tracing::trace!(?label, "rendering frame");
-
-    let start_time = Instant::now();
 
     let target_size = SurfaceSize::from_texture(texture);
     let target_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -108,12 +116,6 @@ fn render_to_texture(
     });
 
     backend.queue.submit([encoder.finish()]);
-
-    let end_time = Instant::now();
-
-    let render_frame_info = resources.get_mut_or_insert_default::<RenderFrameInfo>();
-    render_frame_info.fps.push(end_time);
-    render_frame_info.frame_time = end_time.duration_since(start_time);
 }
 
 #[derive(Clone, Debug)]

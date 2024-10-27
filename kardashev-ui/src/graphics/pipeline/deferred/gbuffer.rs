@@ -26,7 +26,7 @@ impl Buffers {
             &self.normal,
             &self.diffuse_occlusion,
             &self.specular_smoothness,
-            &self.emission
+            &self.emission,
         ]
     }
 }
@@ -89,7 +89,8 @@ impl GeometryBuffer {
             Some("emission buffer"),
         );
 
-        let mut bind_group_layout_entries = ArrayVec::<wgpu::BindGroupLayoutEntry, {Self::NUM_TEXTURES + 1}>::new();
+        let mut bind_group_layout_entries =
+            ArrayVec::<wgpu::BindGroupLayoutEntry, { Self::NUM_TEXTURES + 1 }>::new();
         bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -117,20 +118,15 @@ impl GeometryBuffer {
                     entries: &bind_group_layout_entries,
                 });
 
-                let buffers = Buffers {
-                    position,
-                    normal,
-                    diffuse_occlusion,
-                    specular_smoothness,
-                    emission,
-                };
+        let buffers = Buffers {
+            position,
+            normal,
+            diffuse_occlusion,
+            specular_smoothness,
+            emission,
+        };
 
-        let bind_group = create_bind_group(
-            backend,
-            &bind_group_layout,
-            &sampler,
-            &buffers,
-        );
+        let bind_group = create_bind_group(backend, &bind_group_layout, &sampler, &buffers);
 
         Self {
             size,
@@ -159,12 +155,12 @@ impl GeometryBuffer {
     }
 
     pub fn fragment_targets(&self) -> [wgpu::ColorTargetState; Self::NUM_TEXTURES] {
-        self.buffers.as_array().map(|buffer| 
+        self.buffers.as_array().map(|buffer| {
             wgpu::ColorTargetState {
                 format: buffer.format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
-            
+            }
         })
     }
 
@@ -185,18 +181,16 @@ fn create_bind_group(
     sampler: &wgpu::Sampler,
     buffers: &Buffers,
 ) -> wgpu::BindGroup {
-    let mut entries = ArrayVec::<wgpu::BindGroupEntry, {GeometryBuffer::NUM_TEXTURES + 1}>::new();
+    let mut entries = ArrayVec::<wgpu::BindGroupEntry, { GeometryBuffer::NUM_TEXTURES + 1 }>::new();
     entries.push(wgpu::BindGroupEntry {
         binding: 0,
         resource: wgpu::BindingResource::Sampler(sampler),
     });
     for (i, buffer) in buffers.as_array().iter().enumerate() {
-        entries.push(
-            wgpu::BindGroupEntry {
-                binding: i as u32 + 1,
-                resource: wgpu::BindingResource::TextureView(&buffer.texture_view),
-            }
-        )
+        entries.push(wgpu::BindGroupEntry {
+            binding: i as u32 + 1,
+            resource: wgpu::BindingResource::TextureView(&buffer.texture_view),
+        })
     }
 
     backend

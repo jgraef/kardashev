@@ -8,7 +8,6 @@ use kardashev_protocol::assets::{
     AssetId,
 };
 use palette::Srgba;
-use wgpu::util::DeviceExt;
 
 use super::Backend;
 use crate::{
@@ -30,6 +29,7 @@ use crate::{
     },
     graphics::{
         backend::PerBackend,
+        stats::Track,
         utils::{
             GpuResourceCache,
             TextureFormatExt,
@@ -245,7 +245,7 @@ pub enum TextureError {
 
 #[derive(Debug)]
 pub struct GpuTexture {
-    pub texture: wgpu::Texture,
+    pub texture: Track<wgpu::Texture>,
     pub view: wgpu::TextureView,
 }
 

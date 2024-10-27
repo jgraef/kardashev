@@ -1,4 +1,7 @@
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 
 use crate::graphics::{
     pipeline::{
@@ -89,11 +92,13 @@ impl RenderPipeline for DebugPipeline {
         (geometry_buffer, globals): Self::Input<'_>,
         output: Self::Output<'_>,
     ) {
-        self.debug_uniform
-            .write(context.backend, &DebugUniform {
+        self.debug_uniform.write(
+            context.backend,
+            &DebugUniform {
                 channel: self.channel.as_u32(),
                 _padding: Default::default(),
-            });
+            },
+        );
         let mut render_pass = RenderPassBuilder::<1>::default()
             .with_label("deferred lighting render pass")
             .with_color_attachment(ColorAttachment {

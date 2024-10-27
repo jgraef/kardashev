@@ -54,6 +54,7 @@ use crate::{
             GpuResourceCache,
             HasVertexBufferLayout,
             MaterialBindGroupLayoutBuilder,
+            PipelineBuilder,
             RenderPassBuilder,
             Srgb32Ext,
             TextureBuffer,
@@ -78,15 +79,6 @@ impl CreatePipeline for CreateBlinnPhongRenderPipeline {
     ) -> Self::Pipeline {
         output_config.add_usages(wgpu::TextureUsages::RENDER_ATTACHMENT);
 
-        // todo: split into vertex/fragment shader parts
-        let shader = context
-            .backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("blinn_phong.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(shader::SOURCE.into()),
-            });
-
         let globals = UniformBuffer::new(context.backend);
 
         let depth_texture = TextureBuffer::new(
@@ -99,63 +91,19 @@ impl CreatePipeline for CreateBlinnPhongRenderPipeline {
         let material_bind_group_layout =
             BlinnPhongMaterial::create_bind_group_layout(context.backend);
 
-        let pipeline_layout =
-            context
-                .backend
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("blinn-phong pipeline layout"),
-                    bind_group_layouts: &[&globals.bind_group_layout, &material_bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-
-        let pipeline =
-            context
-                .backend
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("blinn-phong pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        buffers: &[Vertex::layout(), Instance::layout()],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: output_config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: Some(wgpu::Face::Back),
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        unclipped_depth: false,
-                        conservative: false,
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: depth_texture.format,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview: None,
-                    cache: None,
-                });
+        let pipeline = PipelineBuilder::new(&shader::SOURCE)
+            .with_label("blinn-phong pipeline")
+            .with_bind_group_layout(&globals.bind_group_layout)
+            .with_bind_group_layout(&material_bind_group_layout)
+            .with_vertex_buffer_layout(Vertex::layout())
+            .with_vertex_buffer_layout(Instance::layout())
+            .with_fragment_target(wgpu::ColorTargetState {
+                format: output_config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+            .with_depth_texture_format(depth_texture.format)
+            .build(context.backend);
 
         let draw = DrawMeshesWithMaterials::new(
             context.backend,

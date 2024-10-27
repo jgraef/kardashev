@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod model;
 pub mod pipeline;
 pub mod render_frame;
+pub mod stats;
 pub mod texture;
 pub mod transform;
 pub mod utils;
@@ -193,6 +194,7 @@ impl Reactor {
                 });
 
                 match Backend::new(
+                    BackendType::WebGpu,
                     Arc::new(instance),
                     &config,
                     None,
@@ -218,8 +220,14 @@ impl Reactor {
                 });
                 let shared_backend = if backend_type.uses_shared_backend() {
                     Some(
-                        Backend::new(Arc::new(instance), &config, None, backend_type.limits())
-                            .await?,
+                        Backend::new(
+                            backend_type,
+                            Arc::new(instance),
+                            &config,
+                            None,
+                            backend_type.limits(),
+                        )
+                        .await?,
                     )
                 }
                 else {
@@ -271,7 +279,7 @@ impl Reactor {
             (surface, backend.clone())
         }
         else {
-            tracing::debug!("creating WebGL instance");
+            tracing::debug!("creating instance {:?}", self.backend_type);
             let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: self.backend_type.as_wgpu(),
                 ..Default::default()
@@ -280,6 +288,7 @@ impl Reactor {
             let surface = instance.create_surface(window_handle)?;
 
             let backend = Backend::new(
+                self.backend_type,
                 instance,
                 &self.config,
                 Some(&surface),

@@ -1,45 +1,47 @@
-#import ../globals.wgsl::{Globals, PointLight};
+#import ../globals.wgsl::{Globals, PointLight, MAX_POINT_LIGHTS};
 
 @group(0) @binding(0)
 var<uniform> globals: Globals;
 
 struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
-    @location(2) normal: vec3<f32>,
-    @location(3) tangent: vec3<f32>,
-    @location(4) bitangent: vec3<f32>,
+    @location(0) position: vec3f,
+    @location(1) tex_coords: vec2f,
+    @location(2) normal: vec3f,
+    @location(3) tangent: vec3f,
+    @location(4) bitangent: vec3f,
 }
 
 struct InstanceInput {
-    @location(5) model_transform_a: vec4<f32>,
-    @location(6) model_transform_b: vec4<f32>,
-    @location(7) model_transform_c: vec4<f32>,
-    @location(8) model_transform_d: vec4<f32>,
-    @location(9) material_ambient_color: vec3<f32>,
-    @location(10) material_diffuse_color: vec3<f32>,
-    @location(11) material_specular_color: vec3<f32>,
-    @location(12) material_emissive_color: vec3<f32>,
+    @location(5) model_transform_x: vec4f,
+    @location(6) model_transform_y: vec4f,
+    @location(7) model_transform_z: vec4f,
+    @location(8) model_transform_w: vec4f,
+    @location(9) material_ambient_color: vec3f,
+    @location(10) material_diffuse_color: vec3f,
+    @location(11) material_specular_color: vec3f,
+    @location(12) material_emissive_color: vec3f,
     @location(13) material_shininess: f32,
     @location(14) material_dissolve: f32,
 }
 
 struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) tangent_position: vec3<f32>,
-    @location(2) tangent_view_position: vec3<f32>,
-    @location(3) tangent_light_position: vec3<f32>,
-    @location(4) material_ambient_color: vec3<f32>,
-    @location(5) material_diffuse_color: vec3<f32>,
-    @location(6) material_specular_color: vec3<f32>,
-    @location(7) material_emissive_color: vec3<f32>,
-    @location(8) material_shininess: f32,
-    @location(9) material_dissolve: f32,
+    @builtin(position) clip_position: vec4f,
+    @location(0) tex_coords: vec2f,
+    @location(1) tangent_position: vec3f,
+    @location(2) tangent_view_position: vec3f,
+    @location(3) tangent_matrix_x: vec3f,
+    @location(4) tangent_matrix_y: vec3f,
+    @location(5) tangent_matrix_z: vec3f,
+    @location(6) material_ambient_color: vec3f,
+    @location(7) material_diffuse_color: vec3f,
+    @location(8) material_specular_color: vec3f,
+    @location(9) material_emissive_color: vec3f,
+    @location(10) material_shininess: f32,
+    @location(11) material_dissolve: f32,
 }
 
 struct FragmentOutput {
-    @location(0) color: vec4<f32>,
+    @location(0) color: vec4f,
 }
 
 @group(1) @binding(0)
@@ -78,20 +80,20 @@ fn vs_main(
     instance: InstanceInput,
 ) -> VertexOutput {
     let model_transform = mat4x4<f32>(
-        instance.model_transform_a,
-        instance.model_transform_b,
-        instance.model_transform_c,
-        instance.model_transform_d,
+        instance.model_transform_x,
+        instance.model_transform_y,
+        instance.model_transform_z,
+        instance.model_transform_w,
     );
 
     var out: VertexOutput;
 
-    let world_position = model_transform * vec4<f32>(vertex.position, 1.0);
+    let world_position = model_transform * vec4f(vertex.position, 1.0);
 
     // this works if the model_transform uses uniform scaling.
-    let world_normal = normalize((model_transform * vec4<f32>(vertex.normal, 0.0)).xyz);
-    let world_tangent = normalize((model_transform * vec4<f32>(vertex.tangent, 0.0)).xyz);
-    let world_bitangent = normalize((model_transform * vec4<f32>(vertex.bitangent, 0.0)).xyz);
+    let world_normal = normalize((model_transform * vec4f(vertex.normal, 0.0)).xyz);
+    let world_tangent = normalize((model_transform * vec4f(vertex.tangent, 0.0)).xyz);
+    let world_bitangent = normalize((model_transform * vec4f(vertex.bitangent, 0.0)).xyz);
     //let world_normal = vertex.normal;
     //let world_tangent = vertex.tangent;
     //let world_bitangent = vertex.bitangent;
@@ -107,11 +109,9 @@ fn vs_main(
         
     out.tangent_position = tangent_matrix * world_position.xyz;
     out.tangent_view_position = tangent_matrix * globals.view_position.xyz;
-    // fixme
-    //for (var i: u32 = 0; i < globals.num_point_lights; i++) {
-    //    out.tangent_light_position[i] = tangent_matrix * globals.point_lights[i].position;
-    //}
-    out.tangent_light_position = tangent_matrix * globals.point_lights[0].position.xyz;
+    out.tangent_matrix_x = tangent_matrix.x;
+    out.tangent_matrix_y = tangent_matrix.y;
+    out.tangent_matrix_z = tangent_matrix.z;
     
     out.material_ambient_color = instance.material_ambient_color;
     out.material_diffuse_color = instance.material_diffuse_color;
@@ -127,6 +127,12 @@ fn vs_main(
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
     
+    let tangent_matrix = mat3x3f(
+        in.tangent_matrix_x,
+        in.tangent_matrix_y,
+        in.tangent_matrix_z,
+    );
+
     let tangent_normal = textureSample(material_normal_texture_view, material_normal_sampler, in.tex_coords).xyz * 2.0 - 1.0;
     //let tangent_normal = vec3f(0.0, 0.0, 1.0);
 
@@ -150,7 +156,8 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
 
     // spot lights
     for (var i: u32 = 0; i < globals.num_point_lights; i++) {
-        let light_direction = normalize(in.tangent_light_position - in.tangent_position);
+        let light_position = tangent_matrix * globals.point_lights[i].position;
+        let light_direction = normalize(light_position - in.tangent_position);
         
         let reflect_direction = reflect(-light_direction, tangent_normal);
         //let half_direction = normalize(view_direction + light_direction);

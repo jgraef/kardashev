@@ -17,3 +17,5 @@
   - [Deferred Shading](https://learnopengl.com/Advanced-Lighting/Deferred-Shading) (also has many other good topics)
  - Barnes-Hut algorithm for n-body systems?
  - neat textures: https://www.sharetextures.com/textures
+ - optimize meshes: https://github.com/gwihlidal/meshopt-rs (ffi-binding, so use in asset pipeline)
+ - generate meshes: https://danielsieger.com/blog/2021/03/27/generating-spheres.html

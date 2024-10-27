@@ -302,7 +302,7 @@ impl MeshData {
                 let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;
                 // We flip the bitangent to enable right-handed normal
                 // maps with wgpu texture coordinate system
-                let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
+                //let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
 
                 // We'll use the same tangent/bitangent for each vertex in the triangle
                 self.vertices[c[0] as usize].tangent =
@@ -311,12 +311,15 @@ impl MeshData {
                     (tangent + Vector3::from(self.vertices[c[1] as usize].tangent)).into();
                 self.vertices[c[2] as usize].tangent =
                     (tangent + Vector3::from(self.vertices[c[2] as usize].tangent)).into();
-                self.vertices[c[0] as usize].bitangent =
-                    (bitangent + Vector3::from(self.vertices[c[0] as usize].bitangent)).into();
-                self.vertices[c[1] as usize].bitangent =
-                    (bitangent + Vector3::from(self.vertices[c[1] as usize].bitangent)).into();
-                self.vertices[c[2] as usize].bitangent =
-                    (bitangent + Vector3::from(self.vertices[c[2] as usize].bitangent)).into();
+                // we can skip calculating bitangents since we get them in a later step anyway.
+                //self.vertices[c[0] as usize].bitangent =
+                //    (bitangent + Vector3::from(self.vertices[c[0] as
+                // usize].bitangent)).into(); self.vertices[c[1] as
+                // usize].bitangent =    (bitangent +
+                // Vector3::from(self.vertices[c[1] as usize].bitangent)).into();
+                // self.vertices[c[2] as usize].bitangent =
+                //    (bitangent + Vector3::from(self.vertices[c[2] as
+                // usize].bitangent)).into();
 
                 // Used to average the tangents/bitangents
                 triangles_included[c[0] as usize] += 1;
@@ -326,10 +329,17 @@ impl MeshData {
 
             // Average the tangents/bitangents
             for (i, n) in triangles_included.into_iter().enumerate() {
-                let denom = 1.0 / n as f32;
                 let v = &mut self.vertices[i];
-                v.tangent = (Vector3::from(v.tangent) * denom).into();
-                v.bitangent = (Vector3::from(v.bitangent) * denom).into();
+                let denom = 1.0 / n as f32;
+                let normal = Vector3::from(v.normal);
+                let tangent = (Vector3::from(v.tangent) * denom).normalize();
+                //let _bitangent = (Vector3::from(v.bitangent) * denom).normalize();
+
+                let tangent = (tangent - tangent.dot(&normal) * normal).normalize();
+                let bitangent = normal.cross(&tangent);
+
+                v.tangent = tangent.into();
+                v.bitangent = bitangent.into();
             }
 
             self.has_binormals = true;

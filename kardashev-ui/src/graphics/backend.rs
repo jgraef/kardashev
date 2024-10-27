@@ -17,6 +17,7 @@ use serde::{
 use crate::{
     graphics::{
         pipeline::deferred::gbuffer::GeometryBuffer,
+        stats::TrackedDevice,
         Config,
         Error,
     },
@@ -65,14 +66,16 @@ pub struct BackendId(NonZeroUsize);
 #[derive(Clone, Debug)]
 pub struct Backend {
     pub id: BackendId,
+    pub ty: BackendType,
     pub instance: Arc<wgpu::Instance>,
     pub adapter: Arc<wgpu::Adapter>,
-    pub device: Arc<wgpu::Device>,
+    pub device: Arc<TrackedDevice>,
     pub queue: Arc<wgpu::Queue>,
 }
 
 impl Backend {
     pub(super) async fn new(
+        ty: BackendType,
         instance: Arc<wgpu::Instance>,
         config: &Config,
         compatible_surface: Option<&wgpu::Surface<'static>>,
@@ -112,9 +115,10 @@ impl Backend {
 
         Ok(Self {
             id,
+            ty,
             instance,
             adapter: Arc::new(adapter),
-            device: Arc::new(device),
+            device: Arc::new(TrackedDevice::new(device)),
             queue: Arc::new(queue),
         })
     }
@@ -134,6 +138,20 @@ impl<T> Default for PerBackend<T> {
 }
 
 impl<T> PerBackend<T> {
+    pub fn get(&self, backend_id: BackendId) -> Option<&T> {
+        self.map.get(&backend_id)
+    }
+
+    pub fn get_or_insert<F>(&mut self, backend_id: BackendId, insert: F) -> &T
+    where
+        F: FnOnce() -> T,
+    {
+        match self.map.entry(backend_id) {
+            small_linear_map::Entry::Occupied(occupied) => occupied.into_mut(),
+            small_linear_map::Entry::Vacant(vacant) => vacant.insert(insert()),
+        }
+    }
+
     pub fn get_or_try_insert<F, E>(&mut self, backend_id: BackendId, insert: F) -> Result<&T, E>
     where
         F: FnOnce() -> Result<T, E>,
@@ -141,10 +159,17 @@ impl<T> PerBackend<T> {
     {
         match self.map.entry(backend_id) {
             small_linear_map::Entry::Occupied(occupied) => Ok(occupied.into_mut()),
-            small_linear_map::Entry::Vacant(vacant) => {
-                let value = insert()?;
-                Ok(vacant.insert(value))
-            }
+            small_linear_map::Entry::Vacant(vacant) => Ok(vacant.insert(insert()?)),
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (BackendId, &T)> {
+        self.map.iter().map(|(id, value)| (*id, value))
+    }
+}
+
+impl<T: Default> PerBackend<T> {
+    pub fn get_or_insert_default(&mut self, backend_id: BackendId) -> &T {
+        self.get_or_insert(backend_id, Default::default)
     }
 }

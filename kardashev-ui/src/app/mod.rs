@@ -48,7 +48,10 @@ use crate::{
         },
         material::Material,
         mesh::{
-            shape,
+            shape::{
+                self,
+                sphere::Sphere,
+            },
             Mesh,
             MeshBuilder,
             Meshable,
@@ -120,9 +123,16 @@ fn provide_world() {
 }
 
 fn create_world(system_context: &mut SystemContext) {
-    //let shape = shape::Sphere::default().mesh().build();
-    let shape = shape::Cuboid::default().mesh().build();
+    let shape = Sphere::default().mesh().build();
+    //let shape = shape::Cuboid::default().mesh().build();
+    //let shape2 = shape::Sphere::default()
+    //    .mesh()
+    //    .with_mesh_type(shape::SphereMeshType::Ico { subdivisions: 40 })
+    //    .build();
     let sphere = Mesh::from(shape).with_asset_id(asset_id!("d264e0db-9e26-4cca-8469-3fcb1d674bf5"));
+    //let sphere2 =
+    //    Mesh::from(shape2).with_asset_id(asset_id!("
+    // ca1524bb-501d-4430-8ded-0672f44e7aa3"));
 
     const SUN_LIGHT_COLOR: Srgb<f32> = Srgb::new(1.0, 0.92902, 0.89906);
 
@@ -146,6 +156,16 @@ fn create_world(system_context: &mut SystemContext) {
         //Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
         Label::new_static("earth"),
     ));
+
+    /*let _earth2 = system_context.world.spawn((
+        Transform::from_position(Point3::new(5.0, 0.0, 0.0)),
+        sphere2,
+        Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
+            "d5b74211-70fb-4b4c-9199-c5aa89b90b01" //"cbef3406-54ae-4832-bebf-27c3ac9e130c"
+        )),
+        //Load::<Material<PbrMaterial>>::new(asset_id!("d5b74211-70fb-4b4c-9199-c5aa89b90b01")),
+        Label::new_static("earth"),
+    ));*/
 
     system_context.resources.insert(AmbientLight {
         color: palette::named::WHITE.into_format() * 0.1,

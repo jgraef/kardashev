@@ -25,6 +25,7 @@ use crate::{
             Backend,
             BackendId,
         },
+        stats::Track,
         SurfaceSize,
     },
     utils::any_cache::AnyArcCache,
@@ -179,7 +180,7 @@ impl GpuResourceCache {
 
 #[derive(Debug)]
 pub struct ResizableVertexBuffer<T> {
-    buffer: wgpu::Buffer,
+    buffer: Track<wgpu::Buffer>,
     capacity: usize,
     _instance_type: PhantomData<T>,
 }
@@ -223,7 +224,7 @@ impl<T> ResizableVertexBuffer<T> {
         self.capacity
     }
 
-    fn create_instance_buffer(backend: &Backend, capacity: usize) -> wgpu::Buffer {
+    fn create_instance_buffer(backend: &Backend, capacity: usize) -> Track<wgpu::Buffer> {
         tracing::trace!(capacity, "allocating instance buffer");
 
         backend.device.create_buffer(&wgpu::BufferDescriptor {
@@ -375,7 +376,7 @@ impl TextureFormatExt for TextureFormat {
 /// A general-purpose uniform buffer
 #[derive(Debug)]
 pub struct UniformBuffer<T> {
-    pub buffer: wgpu::Buffer,
+    pub buffer: Track<wgpu::Buffer>,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
     _ty: PhantomData<T>,
@@ -440,7 +441,7 @@ impl<T: Pod> UniformBuffer<T> {
 /// A general-purpose texture buffer
 #[derive(Debug)]
 pub struct TextureBuffer {
-    pub texture: wgpu::Texture,
+    pub texture: Track<wgpu::Texture>,
     pub texture_view: wgpu::TextureView,
     pub format: wgpu::TextureFormat,
     pub size: SurfaceSize,
@@ -485,7 +486,7 @@ impl TextureBuffer {
         surface_size: SurfaceSize,
         format: wgpu::TextureFormat,
         label: Option<&str>,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
+    ) -> (Track<wgpu::Texture>, wgpu::TextureView) {
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label,
             size: wgpu::Extent3d {
