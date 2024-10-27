@@ -12,7 +12,7 @@ use kardashev_protocol::assets::{
 use nalgebra::Vector3;
 
 use crate::graphics::mesh::{
-    shape::MeshDataBuilder,
+    shape::builder::ShapeBuilder,
     MeshBuilder,
     Meshable,
 };
@@ -47,9 +47,9 @@ impl Meshable for Sphere {
 
 #[derive(Clone, Copy, Debug)]
 pub enum SphereMeshType {
-    Cube { subdivisions: usize },
-    Ico { subdivisions: usize },
     Uv { sectors: usize, stacks: usize },
+    Ico { subdivisions: usize },
+    Cube { subdivisions: usize },
 }
 
 impl Default for SphereMeshType {
@@ -159,7 +159,7 @@ fn mesh_sphere_uv(radius: f32, num_slices: usize, num_stacks: usize) -> MeshData
     let num_vertices = num_slices * num_stacks;
     let num_indices = num_vertices * 6;
 
-    let mut builder = MeshDataBuilder::with_capacity(num_vertices, num_indices);
+    let mut builder = ShapeBuilder::with_capacity(num_vertices, num_indices);
 
     let stack_step_tex = 1.0 / (num_stacks as f32);
     let slice_step_tex = 1.0 / (num_slices as f32);
@@ -202,7 +202,7 @@ fn mesh_sphere_uv(radius: f32, num_slices: usize, num_stacks: usize) -> MeshData
     // add bottom vertex
     let bottom_vertex = builder.add_vertex(Vertex {
         position: [0.0, -radius, 0.0],
-        tex_coords: [0.5, 0.0],
+        tex_coords: [0.5, 1.0],
         normal: [0.0, -1.0, 0.0],
         tangent: Default::default(),
         bitangent: Default::default(),
@@ -214,16 +214,16 @@ fn mesh_sphere_uv(radius: f32, num_slices: usize, num_stacks: usize) -> MeshData
         let l = (num_stacks - 2) * (num_slices + 1) + 1;
 
         // top vertices
-        let top1 = j + 1;
-        let top2 = j + 2;
+        let top_left = j + 1;
+        let top_right = j + 2;
 
-        builder.add_face([top_vertex, top1, top2]);
+        builder.add_face([top_vertex, top_left, top_right]);
 
         // bottom vertices
-        let bottom1 = j + l;
-        let bottom2 = j + l + 1;
+        let bottom_left = j + l;
+        let bottom_right = j + l + 1;
 
-        builder.add_face([bottom1, bottom2, bottom_vertex]);
+        builder.add_face([bottom_right, bottom_left, bottom_vertex]);
     }
 
     // add quads for each stack / slice

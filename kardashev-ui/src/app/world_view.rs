@@ -4,12 +4,16 @@ use kardashev_style::style;
 use leptos::{
     component,
     create_rw_signal,
+    event_target_value,
     expect_context,
     on_cleanup,
     store_value,
     view,
     IntoView,
     RwSignal,
+    SignalGet,
+    SignalGetUntracked,
+    SignalSet,
     SignalUpdate,
     SignalWith,
 };
@@ -21,10 +25,8 @@ use nalgebra::{
     Vector3,
 };
 use palette::WithAlpha;
-use tokio::sync::{
-    mpsc,
-    watch,
-};
+use strum::VariantNames;
+use tokio::sync::mpsc;
 
 use crate::{
     app::components::window::{
@@ -59,6 +61,7 @@ use crate::{
             },
             hdr::{
                 CreateHdrPipeline,
+                HdrPipeline,
                 ToneMap,
             },
             CreatePipeline,
@@ -82,11 +85,7 @@ use crate::{
         Surface,
     },
     input::{
-        keyboard::{
-            KeyCode,
-            KeyboardEvent,
-            KeyboardInput,
-        },
+        keyboard::KeyboardInput,
         mouse::{
             MouseButton,
             MouseEvent,
@@ -103,8 +102,13 @@ struct Style;
 pub fn WorldView() -> impl IntoView {
     let camera_entity = store_value(None);
     let (tx_mouse, rx_mouse) = mpsc::channel(128);
-    let (tx_pipeline_switch, rx_pipeline_switch) = watch::channel(WhichPipeline::default());
+
     let debug_info = create_rw_signal(DebugInfo::default());
+    let debug_config = DebugConfig {
+        pipeline: create_rw_signal(Pipeline::ForwardBlinnPhong),
+        tone_map: create_rw_signal(ToneMap::Aces),
+        gamma: create_rw_signal(1.0),
+    };
 
     let on_load = move |surface: &Surface| {
         tracing::debug!("spawning camera for window");
@@ -114,14 +118,7 @@ pub fn WorldView() -> impl IntoView {
 
         let render_target = RenderTarget::from_surface(surface);
         let render_view = DynRenderView::new(
-            CreateHdrPipeline {
-                inner: CreateWorldViewPipeline {
-                    switch: rx_pipeline_switch,
-                },
-                format: wgpu::TextureFormat::Rgba16Float,
-                tone_map: ToneMap::Aces,
-            }
-            .create_render_view_from_surface(surface),
+            CreateWorldViewPipeline { debug_config }.create_render_view_from_surface(surface),
         );
 
         let world = expect_context::<WorldServer>();
@@ -142,7 +139,7 @@ pub fn WorldView() -> impl IntoView {
                         .clone(),
                     state: Default::default(),
                     z_mouse: 10.0,
-                    switch_pipeline: tx_pipeline_switch,
+                    debug_config,
                 },
                 render_target,
                 render_view,
@@ -211,12 +208,13 @@ pub fn WorldView() -> impl IntoView {
 
     view! {
         <div class=Style::window>
+            <Window on_load on_event />
             <ul class=Style::debug_overlay>
                 {move || {
                     debug_info.with(|debug_info| {
                         view!{
                             <li>"FPS: " {format!("{:.2}", debug_info.fps)}</li>
-                            <li>"Frame time: " {format!("{:.3} ms", debug_info.frame_time)}</li>
+                            <li>"Frame time: " {format!("{:.2} ms", debug_info.frame_time)}</li>
                             <li>"Pipeline: " {format!("{:?}", debug_info.which)}</li>
                             <li>"Resources:"
                                 <ul>
@@ -227,16 +225,88 @@ pub fn WorldView() -> impl IntoView {
                         }
                     })
                 }}
-
+                <li>
+                    "Tone map: "
+                    <select
+                        on:change=move |event| {
+                            let value = event_target_value(&event);
+                            let value = match value.as_str() {
+                                "Aces" => ToneMap::Aces,
+                                "Reinard" => ToneMap::Reinard,
+                                "Exposure" => ToneMap::Exposure { exposure: 1.0 },
+                                _ => return,
+                            };
+                            debug_config.tone_map.set(value);
+                        }
+                    >
+                        {
+                            ToneMap::VARIANTS.into_iter().map(move |name| {
+                                let name = *name;
+                                view!{
+                                    <option
+                                        value=name
+                                        selected={move || {
+                                            let current: &'static str = debug_config.tone_map.get().into();
+                                            current == name
+                                        }}
+                                    >
+                                        {name}
+                                    </option>
+                                }
+                            }).collect::<Vec<_>>()
+                        }
+                    </select>
+                    {move || {
+                        match debug_config.tone_map.get() {
+                            ToneMap::Exposure { exposure } => {
+                                view!{
+                                    <ul>
+                                        <li>
+                                            "Exposure: "
+                                            <input
+                                                type="text"
+                                                value={exposure}
+                                                on:change=move |event| {
+                                                    let value = event_target_value(&event);
+                                                    let Ok(value) = value.parse() else { return; };
+                                                    debug_config.tone_map.set(ToneMap::Exposure { exposure: value });
+                                                }
+                                            />
+                                        </li>
+                                    </ul>
+                                }.into_view()
+                            }
+                            _ => ().into_view(),
+                        }
+                    }}
+                </li>
+                <li>
+                    "Gamma: "
+                    <input
+                        type="text"
+                        value={move || debug_config.gamma.get()}
+                        on:change=move |event| {
+                            let value = event_target_value(&event);
+                            let Ok(value) = value.parse() else { return; };
+                            debug_config.gamma.set(value);
+                        }
+                    />
+                </li>
             </ul>
-            <Window on_load on_event />
         </div>
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DebugConfig {
+    pipeline: RwSignal<Pipeline>,
+    tone_map: RwSignal<ToneMap>,
+    gamma: RwSignal<f32>,
+}
+
 #[derive(Clone, Debug)]
 struct CreateWorldViewPipeline {
-    switch: watch::Receiver<WhichPipeline>,
+    debug_config: DebugConfig,
 }
 
 impl CreatePipeline for CreateWorldViewPipeline {
@@ -251,95 +321,29 @@ impl CreatePipeline for CreateWorldViewPipeline {
         output_config: &mut Self::OutputConfig,
     ) -> Self::Pipeline {
         WorldViewPipeline {
-            switch: self.switch,
-            forward_blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(
-                context,
-                input_config,
-                output_config,
-            ),
-            deferred: CreateDeferredPipeline.create_pipeline(context, input_config, output_config),
+            debug_config: self.debug_config,
+            hdr: CreateHdrPipeline::new(CreateSwitchedPipeline {
+                debug_config: self.debug_config,
+            })
+            .with_tone_map(self.debug_config.tone_map.get_untracked())
+            .with_gamma(self.debug_config.gamma.get_untracked())
+            .create_pipeline(context, input_config, output_config),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-enum WhichPipeline {
+enum Pipeline {
     #[default]
     ForwardBlinnPhong,
-    Deferred {
+    DeferredBlinnPhong {
         debug_channel: Option<Channel>,
     },
 }
 
-impl WhichPipeline {
-    pub fn toggle(&mut self) {
-        *self = match *self {
-            WhichPipeline::ForwardBlinnPhong => {
-                WhichPipeline::Deferred {
-                    debug_channel: None,
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: None,
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Position),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Position),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Normal),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Normal),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Diffuse),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Diffuse),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Occlusion),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Occlusion),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Specular),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Specular),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Shininess),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Shininess),
-            } => {
-                WhichPipeline::Deferred {
-                    debug_channel: Some(Channel::Emission),
-                }
-            }
-            WhichPipeline::Deferred {
-                debug_channel: Some(Channel::Emission),
-            } => WhichPipeline::ForwardBlinnPhong,
-        };
-    }
-}
-
-#[derive(Debug)]
 struct WorldViewPipeline {
-    switch: watch::Receiver<WhichPipeline>,
-    forward_blinn_phong: BlinnPhongRenderPipeline,
-    deferred: DeferredPipeline,
+    debug_config: DebugConfig,
+    hdr: HdrPipeline<SwitchedPipeline>,
 }
 
 impl RenderPipeline for WorldViewPipeline {
@@ -352,12 +356,64 @@ impl RenderPipeline for WorldViewPipeline {
         input: Self::Input<'_>,
         output: Self::Output<'_>,
     ) {
-        match *self.switch.borrow() {
-            WhichPipeline::Deferred { debug_channel } => {
+        self.hdr
+            .set_tone_map(self.debug_config.tone_map.get_untracked());
+        self.hdr.set_gamma(self.debug_config.gamma.get_untracked());
+        self.hdr.render(context, input, output);
+    }
+}
+
+#[derive(Debug)]
+struct CreateSwitchedPipeline {
+    debug_config: DebugConfig,
+}
+
+impl CreatePipeline for CreateSwitchedPipeline {
+    type Pipeline = SwitchedPipeline;
+    type InputConfig = ();
+    type OutputConfig = TextureConfig;
+
+    fn create_pipeline(
+        self,
+        context: &CreatePipelineContext,
+        input_config: &mut Self::InputConfig,
+        output_config: &mut Self::OutputConfig,
+    ) -> Self::Pipeline {
+        SwitchedPipeline {
+            debug_config: self.debug_config,
+            forward_blinn_phong: CreateBlinnPhongRenderPipeline.create_pipeline(
+                context,
+                input_config,
+                output_config,
+            ),
+            deferred: CreateDeferredPipeline.create_pipeline(context, input_config, output_config),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SwitchedPipeline {
+    debug_config: DebugConfig,
+    forward_blinn_phong: BlinnPhongRenderPipeline,
+    deferred: DeferredPipeline,
+}
+
+impl RenderPipeline for SwitchedPipeline {
+    type Input<'a> = RenderWorldInput<'a>;
+    type Output<'a> = TextureOutput<'a>;
+
+    fn render(
+        &mut self,
+        context: &mut RenderPipelineContext,
+        input: Self::Input<'_>,
+        output: Self::Output<'_>,
+    ) {
+        match self.debug_config.pipeline.get_untracked() {
+            Pipeline::DeferredBlinnPhong { debug_channel } => {
                 self.deferred.set_debug(debug_channel);
                 self.deferred.render(context, input, output);
             }
-            WhichPipeline::ForwardBlinnPhong => {
+            Pipeline::ForwardBlinnPhong => {
                 self.forward_blinn_phong.render(context, input, output);
             }
         }
@@ -370,7 +426,7 @@ struct WorldViewCameraController {
     keyboard_input: KeyboardInput,
     state: InputState,
     z_mouse: f32,
-    switch_pipeline: watch::Sender<WhichPipeline>,
+    debug_config: DebugConfig,
 }
 
 fn world_view_camera_controller_system(system_context: &mut SystemContext) {
@@ -431,23 +487,6 @@ fn world_view_camera_controller_system(system_context: &mut SystemContext) {
             match controller.keyboard_input.try_next() {
                 Some(event) => {
                     match event {
-                        KeyboardEvent::KeyDown {
-                            code: KeyCode::F9,
-                            repeat: false,
-                            ..
-                        } => {
-                            let mut which = *controller.switch_pipeline.borrow();
-                            which.toggle();
-                            let _ = controller.switch_pipeline.send(which);
-
-                            let debug_info = system_context
-                                .resources
-                                .get::<RwSignal<DebugInfo>>()
-                                .unwrap();
-                            debug_info.update(|debug_info| {
-                                debug_info.which = which;
-                            });
-                        }
                         _ => {}
                     }
                 }
@@ -472,7 +511,7 @@ impl Plugin for MapPlugin {
 struct DebugInfo {
     fps: f32,
     frame_time: f32,
-    which: WhichPipeline,
+    which: Pipeline,
     resources: ResourceUsages,
 }
 

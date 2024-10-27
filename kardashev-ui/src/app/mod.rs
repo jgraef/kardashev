@@ -48,10 +48,7 @@ use crate::{
         },
         material::Material,
         mesh::{
-            shape::{
-                self,
-                sphere::Sphere,
-            },
+            shape::sphere::Sphere,
             Mesh,
             MeshBuilder,
             Meshable,

@@ -1,3 +1,7 @@
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use wgpu::SamplerBindingType;
 
 use crate::graphics::{
@@ -11,16 +15,19 @@ use crate::graphics::{
     },
     utils::{
         ColorAttachment,
+        PipelineBuilder,
         RenderPassBuilder,
         TextureBuffer,
+        UniformBuffer,
     },
     SurfaceSize,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, strum::IntoStaticStr, strum::VariantNames)]
 pub enum ToneMap {
     Aces,
-    Gamma { gamma: f32 }, // todo
+    Reinard,
+    Exposure { exposure: f32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +35,28 @@ pub struct CreateHdrPipeline<C> {
     pub inner: C,
     pub format: wgpu::TextureFormat,
     pub tone_map: ToneMap,
+    pub gamma: f32,
+}
+
+impl<C> CreateHdrPipeline<C> {
+    pub fn new(inner: C) -> Self {
+        Self {
+            inner,
+            format: wgpu::TextureFormat::Rgba16Float,
+            tone_map: ToneMap::Aces,
+            gamma: 1.0,
+        }
+    }
+
+    pub fn with_tone_map(mut self, tone_map: ToneMap) -> Self {
+        self.tone_map = tone_map;
+        self
+    }
+
+    pub fn with_gamma(mut self, gamma: f32) -> Self {
+        self.gamma = gamma;
+        self
+    }
 }
 
 impl<C, P> CreatePipeline for CreateHdrPipeline<C>
@@ -55,14 +84,6 @@ where
             .inner
             .create_pipeline(context, input_config, &mut inner_output_config);
 
-        let shader = context
-            .backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("hdr.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(shader::SOURCE.into()),
-            });
-
         let bind_group_layout =
             context
                 .backend
@@ -74,7 +95,7 @@ where
                             binding: 0,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
                                 view_dimension: wgpu::TextureViewDimension::D2,
                                 multisampled: false,
                             },
@@ -83,63 +104,24 @@ where
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
                             visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(SamplerBindingType::Filtering),
+                            ty: wgpu::BindingType::Sampler(SamplerBindingType::NonFiltering),
                             count: None,
                         },
                     ],
                 });
 
-        let pipeline_layout =
-            context
-                .backend
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("hdr tonemapping pipeline layout"),
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
+        let config_uniform = UniformBuffer::new(context.backend);
 
-        let pipeline =
-            context
-                .backend
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr tonemapping pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: Some(wgpu::Face::Back),
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        unclipped_depth: false,
-                        conservative: false,
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: output_config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    multiview: None,
-                    cache: None,
-                });
+        let pipeline = PipelineBuilder::new(shader::SOURCE)
+            .with_label("hdr pipeline")
+            .with_bind_group_layout(&config_uniform.bind_group_layout)
+            .with_bind_group_layout(&bind_group_layout)
+            .with_fragment_target(wgpu::ColorTargetState {
+                format: output_config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+            .build(context.backend);
 
         let staging_texture =
             StagingTexture::new(context.backend, &inner_output_config, bind_group_layout);
@@ -148,7 +130,20 @@ where
             inner,
             staging_texture,
             pipeline,
+            config_uniform,
+            tone_map: self.tone_map,
+            gamma: self.gamma,
         }
+    }
+}
+
+impl<P> HdrPipeline<P> {
+    pub fn set_tone_map(&mut self, tone_map: ToneMap) {
+        self.tone_map = tone_map;
+    }
+
+    pub fn set_gamma(&mut self, gamma: f32) {
+        self.gamma = gamma;
     }
 }
 
@@ -157,6 +152,9 @@ pub struct HdrPipeline<P> {
     inner: P,
     staging_texture: StagingTexture,
     pipeline: wgpu::RenderPipeline,
+    config_uniform: UniformBuffer<ConfigUniform>,
+    tone_map: ToneMap,
+    gamma: f32,
 }
 
 impl<P> RenderPipeline for HdrPipeline<P>
@@ -186,6 +184,11 @@ where
             },
         );
 
+        self.config_uniform.write(
+            context.backend,
+            &ConfigUniform::new(self.tone_map, self.gamma),
+        );
+
         let mut render_pass_builder = RenderPassBuilder::<1>::default();
         render_pass_builder.with_label("hdr tonemapping render pass");
         render_pass_builder.with_color_attachment(ColorAttachment {
@@ -194,7 +197,8 @@ where
         });
         let mut render_pass = render_pass_builder.begin(context.encoder);
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.staging_texture.bind_group, &[]);
+        render_pass.set_bind_group(0, &self.config_uniform.bind_group, &[]);
+        render_pass.set_bind_group(1, &self.staging_texture.bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 }
@@ -221,7 +225,17 @@ impl StagingTexture {
         );
         let sampler = backend.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("hdr staging sampler"),
-            ..Default::default()
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None,
         });
         let bind_group =
             create_staging_bind_group(backend, &texture.texture_view, &sampler, &bind_group_layout);
@@ -267,6 +281,33 @@ fn create_staging_bind_group(
                 },
             ],
         })
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct ConfigUniform {
+    tone_map: u32,
+    exposure: f32,
+    gamma: f32,
+    _padding: u32,
+}
+
+impl ConfigUniform {
+    pub fn new(tone_map: ToneMap, gamma: f32) -> Self {
+        let mut config = ConfigUniform::zeroed();
+        config.gamma = gamma;
+
+        config.tone_map = match tone_map {
+            ToneMap::Aces => 0,
+            ToneMap::Reinard => 1,
+            ToneMap::Exposure { exposure } => {
+                config.exposure = exposure;
+                2
+            }
+        };
+
+        config
+    }
 }
 
 #[include_wgsl_oil::include_wgsl_oil("hdr.wgsl")]
