@@ -71,7 +71,7 @@ CREATE TABLE star (
     effective_temperature REAL NOT NULL,
     color rgb NOT NULL,
     absolute_magnitude REAL NOT NULL,
-    luminousity REAL NOT NULL,
+    luminosity REAL NOT NULL,
     radius REAL NOT NULL,
     mass REAL NOT NULL,
     spectral_type TEXT NOT NULL,

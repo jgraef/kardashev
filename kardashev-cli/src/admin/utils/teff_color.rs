@@ -1,12 +1,15 @@
 use lazy_static::lazy_static;
-use palette::LinSrgb;
+use palette::{
+    LinSrgb,
+    Srgb,
+};
 use serde::Deserialize;
 
 lazy_static! {
-    static ref TEFF_COLORS: Vec<(u32, LinSrgb)> = parse_csv();
+    static ref TEFF_COLORS: Vec<(u32, Srgb<f32>)> = parse_csv();
 }
 
-fn parse_csv() -> Vec<(u32, LinSrgb)> {
+fn parse_csv() -> Vec<(u32, Srgb)> {
     #[derive(Deserialize)]
     struct Row {
         t_eff: u32,
@@ -21,17 +24,17 @@ fn parse_csv() -> Vec<(u32, LinSrgb)> {
         .deserialize::<Row>()
         .map(|row| {
             let row = row.unwrap();
-            (row.t_eff, LinSrgb::new(row.r, row.g, row.b))
+            (row.t_eff, Srgb::new(row.r, row.g, row.b))
         })
         .collect()
 }
 
-pub fn teff_color(t_eff: f32) -> LinSrgb {
+pub fn teff_color(t_eff: f32) -> Srgb {
     let index = match TEFF_COLORS.binary_search_by_key(&(t_eff as u32), |(t_eff, _)| *t_eff) {
         Ok(index) | Err(index) => index,
     };
 
-    if index + 1 == TEFF_COLORS.len() {
+    if index + 1 >= TEFF_COLORS.len() {
         return TEFF_COLORS[TEFF_COLORS.len() - 1].1;
     }
 
@@ -40,11 +43,11 @@ pub fn teff_color(t_eff: f32) -> LinSrgb {
 
     let k = (t_eff - t_lower) / (t_upper - t_lower);
 
-    let rgb_lower = TEFF_COLORS[index].1;
-    let rgb_upper = TEFF_COLORS[index + 1].1;
-    LinSrgb::new(
+    let rgb_lower: LinSrgb = TEFF_COLORS[index].1.into_linear();
+    let rgb_upper: LinSrgb = TEFF_COLORS[index + 1].1.into_linear();
+    Srgb::from_linear(LinSrgb::new(
         (1.0 - k) * rgb_lower.red + k * rgb_upper.red,
         (1.0 - k) * rgb_lower.green + k * rgb_upper.green,
         (1.0 - k) * rgb_lower.blue + k * rgb_upper.blue,
-    )
+    ))
 }

@@ -28,6 +28,7 @@ use crate::{
             GpuMaterial,
             MaterialError,
             PipelineMaterial,
+            Tint,
         },
         pipeline::{
             draw_world::{
@@ -353,15 +354,19 @@ pub struct MaterialInstanceData {
 }
 
 impl MaterialInstanceData {
-    pub fn from_material(material: &BlinnPhongMaterial) -> Self {
+    pub fn from_material_and_tint(material: &BlinnPhongMaterial, tint: Option<&Tint>) -> Self {
         const WHITE: Srgb<f32> = Srgb::new(1.0, 1.0, 1.0);
+        let (tint_rgb, tint_alpha) = tint
+            .map(|tint| (tint.tint.color, tint.tint.alpha))
+            .unwrap_or((WHITE, 0.0));
+
         Self {
-            ambient_color: material.ambient_color.unwrap_or(WHITE).as_array3(),
-            diffuse_color: material.diffuse_color.unwrap_or(WHITE).as_array3(),
+            ambient_color: (material.ambient_color.unwrap_or(WHITE) * tint_rgb).as_array3(),
+            diffuse_color: (material.diffuse_color.unwrap_or(WHITE) * tint_rgb).as_array3(),
             specular_color: material.specular_color.unwrap_or(WHITE).as_array3(),
-            emissive_color: material.emissive_color.unwrap_or(WHITE).as_array3(),
+            emissive_color: (material.emissive_color.unwrap_or(WHITE) * tint_rgb).as_array3(),
             shininess: material.shininess.unwrap_or(64.0),
-            dissolve: material.dissolve.unwrap_or(0.0),
+            dissolve: material.dissolve.unwrap_or_default() * tint_alpha,
         }
     }
 }
@@ -374,10 +379,14 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(transform: &GlobalTransform, material: &BlinnPhongMaterial) -> Self {
+    pub fn new(
+        transform: &GlobalTransform,
+        material: &BlinnPhongMaterial,
+        tint: Option<&Tint>,
+    ) -> Self {
         Instance {
             model_transform: transform.as_homogeneous_matrix_array(),
-            material: MaterialInstanceData::from_material(material),
+            material: MaterialInstanceData::from_material_and_tint(material, tint),
         }
     }
 }

@@ -10,6 +10,7 @@ use axum::{
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{
+    normalize_path::NormalizePathLayer,
     services::{
         ServeDir,
         ServeFile,
@@ -70,23 +71,25 @@ impl Args {
         }
 
         router = router.layer(
-            ServiceBuilder::new().layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(|req: &Request| {
-                        let method = req.method();
-                        let uri = req.uri();
+            ServiceBuilder::new()
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|req: &Request| {
+                            let method = req.method();
+                            let uri = req.uri();
 
-                        // axum automatically adds this extension.
-                        let matched_path = req
-                            .extensions()
-                            .get::<MatchedPath>()
-                            .map(|matched_path| matched_path.as_str());
+                            // axum automatically adds this extension.
+                            let matched_path = req
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map(|matched_path| matched_path.as_str());
 
-                        tracing::info_span!("request", %method, %uri, matched_path)
-                    })
-                    .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
-            ),
+                            tracing::info_span!("request", %method, %uri, matched_path)
+                        })
+                        .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                )
+                .layer(NormalizePathLayer::trim_trailing_slash()),
         );
 
         shutdown.spawn({

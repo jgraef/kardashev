@@ -64,6 +64,7 @@ naga = "22.1.0"
 hexasphere = "15.0.0"
 humansize = "2.1.3"
 strum = { version = "0.26.3", features = ["derive"] }
+parry3d = "0.17.1"
 
 [package.metadata.kardashev.style]
 # Specify a directory to which to write the output CSS.

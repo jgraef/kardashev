@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod assets;
+pub mod collide;
 pub mod ecs;
 pub mod error;
 pub mod graphics;

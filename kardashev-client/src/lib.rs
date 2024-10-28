@@ -45,3 +45,13 @@ fn add_trailing_slash(url: &mut Url) {
         }
     }
 }
+
+fn remove_trailing_slash(url: &mut Url) {
+    if let Some(segments) = url.path_segments() {
+        if let Some(last_segment) = segments.last() {
+            if last_segment.is_empty() {
+                url.path_segments_mut().unwrap().pop();
+            }
+        }
+    }
+}

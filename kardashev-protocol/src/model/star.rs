@@ -1,5 +1,5 @@
 use nalgebra::Point3;
-use palette::LinSrgb;
+use palette::Srgb;
 use serde::{
     Deserialize,
     Serialize,
@@ -29,13 +29,31 @@ pub struct CatalogIds {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Star {
     pub id: StarId,
+
+    /// in parsec
+    /// +X is in the direction of the vernal equinox (at epoch 2000), +Z towards
+    /// the north celestial pole, and +Y in the direction of R.A. 6 hours,
+    /// declination 0 degrees.
     pub position: Point3<f32>,
+
+    /// effective temperature in Kelvin, derived from luminosity and radius
     pub effective_temperature: f32,
-    pub color: LinSrgb,
+
+    /// color derived from effective temperature
+    pub color: Srgb,
+
+    /// absolute magnitude
     pub absolute_magnitude: f32,
-    pub luminousity: f32,
+
+    /// luminosity in multiples of solar luminosity
+    pub luminosity: f32,
+
+    /// radius in multiples of solar radii, derived from mass
     pub radius: f32,
+
+    /// mass in multiples of solar mass, derived from luminosity
     pub mass: f32,
+
     pub spectral_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

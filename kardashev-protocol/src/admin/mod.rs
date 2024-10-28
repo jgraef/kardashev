@@ -1,5 +1,5 @@
 use nalgebra::Point3;
-use palette::LinSrgb;
+use palette::Srgb;
 use serde::{
     Deserialize,
     Serialize,
@@ -24,9 +24,9 @@ pub struct CreateStarsResponse {
 pub struct CreateStar {
     pub position: Point3<f32>,
     pub effective_temperature: f32,
-    pub color: LinSrgb,
+    pub color: Srgb,
     pub absolute_magnitude: f32,
-    pub luminousity: f32,
+    pub luminosity: f32,
     pub radius: f32,
     pub mass: f32,
     pub spectral_type: String,

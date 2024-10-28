@@ -3,8 +3,8 @@ use nalgebra::{
     Vector3,
 };
 use palette::{
-    LinSrgb,
-    LinSrgba,
+    Srgb,
+    Srgba,
 };
 use sqlx::{
     encode::IsNull,
@@ -96,11 +96,11 @@ impl<'r> Decode<'r, Postgres> for Vec3 {
     derive_more::Deref,
     derive_more::DerefMut,
 )]
-pub struct Rgba(pub palette::LinSrgba);
+pub struct Rgba(pub palette::Srgba);
 
 impl Rgba {
     pub fn new(red: f32, green: f32, blue: f32, alpha: f32) -> Self {
-        Self(palette::LinSrgba::new(red, green, blue, alpha))
+        Self(palette::Srgba::new(red, green, blue, alpha))
     }
 }
 
@@ -139,9 +139,7 @@ impl<'q> sqlx::Encode<'q, Postgres> for Rgba {
 impl<'r> Decode<'r, Postgres> for Rgba {
     fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
         let adapter = <RgbaAdapter as Decode<'r, Postgres>>::decode(value)?;
-        Ok(Self(LinSrgba::new(
-            adapter.r, adapter.g, adapter.b, adapter.a,
-        )))
+        Ok(Self(Srgba::new(adapter.r, adapter.g, adapter.b, adapter.a)))
     }
 }
 
@@ -155,11 +153,11 @@ impl<'r> Decode<'r, Postgres> for Rgba {
     derive_more::Deref,
     derive_more::DerefMut,
 )]
-pub struct Rgb(pub palette::LinSrgb);
+pub struct Rgb(pub Srgb);
 
 impl Rgb {
     pub fn new(red: f32, green: f32, blue: f32) -> Self {
-        Self(palette::LinSrgb::new(red, green, blue))
+        Self(Srgb::new(red, green, blue))
     }
 }
 
@@ -196,6 +194,6 @@ impl<'q> sqlx::Encode<'q, Postgres> for Rgb {
 impl<'r> Decode<'r, Postgres> for Rgb {
     fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
         let adapter = <RgbAdapter as Decode<'r, Postgres>>::decode(value)?;
-        Ok(Self(LinSrgb::new(adapter.r, adapter.g, adapter.b)))
+        Ok(Self(Srgb::new(adapter.r, adapter.g, adapter.b)))
     }
 }

@@ -21,6 +21,7 @@ use crate::{
             GpuMaterialId,
             Material,
             PipelineMaterial,
+            Tint,
         },
         mesh::{
             GpuMesh,
@@ -66,18 +67,19 @@ impl<M: PipelineMaterial, I: Pod> DrawMeshesWithMaterials<M, I> {
         world: &hecs::World,
         resources: &mut Resources,
         material_bind_group_layout: &wgpu::BindGroupLayout,
-        make_instance: impl Fn(&GlobalTransform, &M) -> I,
+        make_instance: impl Fn(&GlobalTransform, &M, Option<&Tint>) -> I,
     ) {
         tracing::trace!("batching");
 
-        let mut render_entities = world.query::<(&GlobalTransform, &mut Mesh, &mut Material<M>)>();
+        let mut render_entities =
+            world.query::<(&GlobalTransform, &mut Mesh, &mut Material<M>, Option<&Tint>)>();
 
         let gpu_resource_cache = resources.get_mut_or_insert_default::<GpuResourceCache>();
 
-        for (_entity, (transform, mesh, material)) in render_entities.iter() {
+        for (_entity, (transform, mesh, material, tint)) in render_entities.iter() {
             // todo: handle errors
 
-            let instance = make_instance(transform, &material.cpu);
+            let instance = make_instance(transform, &material.cpu, tint);
 
             let Ok(mesh_gpu) = mesh.gpu(backend, gpu_resource_cache)
             else {

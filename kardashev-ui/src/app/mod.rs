@@ -18,7 +18,10 @@ use leptos::{
 use leptos_meta::provide_meta_context;
 use leptos_router::Router;
 use nalgebra::Point3;
-use palette::Srgb;
+use palette::{
+    Srgb,
+    WithAlpha,
+};
 
 use crate::{
     app::{
@@ -36,17 +39,22 @@ use crate::{
         load::Load,
         system::AssetsPlugin,
     },
+    collide::ColliderPlugin,
     ecs::{
         server::WorldServer,
         system::SystemContext,
         Label,
     },
+    error::Error,
     graphics::{
         light::{
             AmbientLight,
             PointLight,
         },
-        material::Material,
+        material::{
+            Material,
+            Tint,
+        },
         mesh::{
             shape::sphere::Sphere,
             Mesh,
@@ -54,10 +62,14 @@ use crate::{
             Meshable,
         },
         pipeline::forward::blinn_phong::BlinnPhongMaterial,
-        transform::Transform,
+        transform::{
+            Parent,
+            Transform,
+        },
         RenderPlugin,
     },
     input::InputPlugin,
+    utils::futures::spawn_local_and_handle_error,
 };
 
 #[style(path = "src/app/app.scss")]
@@ -108,18 +120,66 @@ fn provide_world() {
 
     tracing::debug!("creating world");
     let world = WorldServer::builder()
-        .with_resource(api_client)
         .with_plugin(AssetsPlugin::from_url(asset_url))
         .with_plugin(InputPlugin::default())
-        .with_plugin(RenderPlugin)
+        .with_plugin(ColliderPlugin::default())
         .with_plugin(MapPlugin)
-        .with_startup_system(create_world)
+        .with_plugin(RenderPlugin)
         .build();
 
-    provide_context(world);
+    provide_context(world.clone());
+
+    spawn_local_and_handle_error(load_world(world, api_client));
 }
 
-fn create_world(system_context: &mut SystemContext) {
+fn limit_vec<T>(mut vec: Vec<T>, max: usize) -> Vec<T> {
+    if vec.len() > max {
+        vec.resize_with(max, || unreachable!());
+    }
+    vec
+}
+
+const SOLAR_RADIUS_TO_PARSEC: f32 = 2.25461E-8;
+
+async fn load_world(world: WorldServer, api_client: ApiClient) -> Result<(), Error> {
+    let stars = api_client.get_stars().await?;
+    let stars = limit_vec(stars, 100);
+    tracing::debug!("loaded {} stars from API", stars.len());
+
+    let sphere = Mesh::from(Sphere::default().mesh().build())
+        .with_asset_id(asset_id!("d264e0db-9e26-4cca-8469-3fcb1d674bf5"));
+
+    world.run(move |system_context| {
+        let root = system_context.world.spawn((Transform::identity(),));
+
+        for star in stars {
+            let mut builder = hecs::EntityBuilder::new();
+            if let Some(name) = star.name {
+                builder.add(Label::new(name));
+            }
+            builder.add(Parent { entity: root });
+            builder.add(
+                Transform::from_position(star.position)
+                    .with_scaling(star.radius * SOLAR_RADIUS_TO_PARSEC * 1000000.0),
+            );
+            builder.add(sphere.clone());
+            builder.add(Load::<Material<BlinnPhongMaterial>>::new(asset_id!(
+                "4eef57a3-9df8-4fa1-939f-109c3b02f9f0"
+            )));
+            builder.add(Tint {
+                tint: star.color.with_alpha(1.0),
+            });
+            //builder.add(PointLight::new(star.color));
+
+            system_context.world.spawn(builder.build());
+        }
+    });
+
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn create_test_world(system_context: &mut SystemContext) {
     let shape = Sphere::default().mesh().build();
     //let shape = shape::Cuboid::default().mesh().build();
     //let shape2 = shape::Sphere::default()

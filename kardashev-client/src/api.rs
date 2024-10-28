@@ -17,6 +17,7 @@ use url::Url;
 
 use crate::{
     add_trailing_slash,
+    remove_trailing_slash,
     Error,
     UrlExt,
 };
@@ -31,8 +32,7 @@ impl ApiClient {
     pub fn new(mut api_url: Url) -> Self {
         let client = reqwest::Client::new();
 
-        // the trailing slash is important for `Url::join` to work properly
-        add_trailing_slash(&mut api_url);
+        remove_trailing_slash(&mut api_url);
 
         Self {
             client,

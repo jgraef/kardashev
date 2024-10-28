@@ -64,7 +64,7 @@ pub async fn import_stars(
                 effective_temperature: t_eff,
                 color: color.into(),
                 absolute_magnitude: record.absmag,
-                luminousity: record.lum,
+                luminosity: record.lum,
                 radius: r,
                 mass: m,
                 spectral_type: spect,

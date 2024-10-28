@@ -286,3 +286,8 @@ pub fn get_fallback(
         },
     )
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Tint {
+    pub tint: Srgba<f32>,
+}

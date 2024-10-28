@@ -19,6 +19,12 @@ pub struct Transform {
 }
 
 impl Transform {
+    pub fn identity() -> Self {
+        Self {
+            model_matrix: Similarity3::identity(),
+        }
+    }
+
     pub fn from_position(position: Point3<f32>) -> Self {
         Self {
             model_matrix: Similarity3::from_parts(
@@ -46,7 +52,7 @@ impl Transform {
     }
 
     pub fn with_scaling(mut self, scaling: f32) -> Self {
-        self.model_matrix = self.model_matrix.append_scaling(scaling);
+        self.model_matrix = self.model_matrix.prepend_scaling(scaling);
         self
     }
 }

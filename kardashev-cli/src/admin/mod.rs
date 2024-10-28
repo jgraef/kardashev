@@ -19,7 +19,7 @@ pub struct Args {
         long,
         short,
         env = "KARDASHEV_API_URL",
-        default_value = "http://localhost:3333"
+        default_value = "http://localhost:3333/api"
     )]
     api_url: Url,
 
